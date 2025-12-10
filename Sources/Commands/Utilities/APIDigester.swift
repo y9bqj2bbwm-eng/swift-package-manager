@@ -10,10 +10,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+import _Concurrency
 import Dispatch
 import Foundation
-
-import TSCBasic
 
 import SPMBuildCore
 import Basics
@@ -22,6 +21,11 @@ import PackageGraph
 import PackageModel
 import SourceControl
 import Workspace
+
+import protocol TSCBasic.DiagnosticLocation
+import class Basics.AsyncProcess
+import struct Basics.AsyncProcessResult
+import func TSCBasic.withTemporaryFile
 
 import enum TSCUtility.Diagnostics
 import struct TSCUtility.SerializedDiagnostics
@@ -36,8 +40,11 @@ struct APIDigesterBaselineDumper {
     /// The root package path.
     let packageRoot: AbsolutePath
 
-    /// The input build parameters.
-    let inputBuildParameters: BuildParameters
+    /// Parameters used when building end products.
+    let productsBuildParameters: BuildParameters
+
+    /// Parameters used when building tools (plugins and macros).
+    let toolsBuildParameters: BuildParameters
 
     /// The API digester tool.
     let apiDigesterTool: SwiftAPIDigester
@@ -48,13 +55,15 @@ struct APIDigesterBaselineDumper {
     init(
         baselineRevision: Revision,
         packageRoot: AbsolutePath,
-        buildParameters: BuildParameters,
+        productsBuildParameters: BuildParameters,
+        toolsBuildParameters: BuildParameters,
         apiDigesterTool: SwiftAPIDigester,
         observabilityScope: ObservabilityScope
     ) {
         self.baselineRevision = baselineRevision
         self.packageRoot = packageRoot
-        self.inputBuildParameters = buildParameters
+        self.productsBuildParameters = productsBuildParameters
+        self.toolsBuildParameters = toolsBuildParameters
         self.apiDigesterTool = apiDigesterTool
         self.observabilityScope = observabilityScope
     }
@@ -65,10 +74,10 @@ struct APIDigesterBaselineDumper {
         at baselineDir: AbsolutePath?,
         force: Bool,
         logLevel: Basics.Diagnostic.Severity,
-        swiftTool: SwiftTool
-    ) throws -> AbsolutePath {
+        swiftCommandState: SwiftCommandState
+    ) async throws -> AbsolutePath {
         var modulesToDiff = modulesToDiff
-        let apiDiffDir = inputBuildParameters.apiDiff
+        let apiDiffDir = productsBuildParameters.apiDiff
         let baselineDir = (baselineDir ?? apiDiffDir).appending(component: baselineRevision.identifier)
         let baselinePath: (String)->AbsolutePath = { module in
             baselineDir.appending(component: module + ".json")
@@ -77,7 +86,7 @@ struct APIDigesterBaselineDumper {
         if !force {
             // Baselines which already exist don't need to be regenerated.
             modulesToDiff = modulesToDiff.filter {
-                !swiftTool.fileSystem.exists(baselinePath($0))
+                !swiftCommandState.fileSystem.exists(baselinePath($0))
             }
         }
 
@@ -88,14 +97,14 @@ struct APIDigesterBaselineDumper {
 
         // Setup a temporary directory where we can checkout and build the baseline treeish.
         let baselinePackageRoot = apiDiffDir.appending("\(baselineRevision.identifier)-checkout")
-        if swiftTool.fileSystem.exists(baselinePackageRoot) {
-            try swiftTool.fileSystem.removeFileTree(baselinePackageRoot)
+        if swiftCommandState.fileSystem.exists(baselinePackageRoot) {
+            try swiftCommandState.fileSystem.removeFileTree(baselinePackageRoot)
         }
 
         // Clone the current package in a sandbox and checkout the baseline revision.
         let repositoryProvider = GitRepositoryProvider()
         let specifier = RepositorySpecifier(path: baselinePackageRoot)
-        let workingCopy = try repositoryProvider.createWorkingCopy(
+        let workingCopy = try await repositoryProvider.createWorkingCopy(
             repository: specifier,
             sourcePath: packageRoot,
             at: baselinePackageRoot,
@@ -107,10 +116,10 @@ struct APIDigesterBaselineDumper {
         // Create the workspace for this package.
         let workspace = try Workspace(
             forRootPackage: baselinePackageRoot,
-            cancellator: swiftTool.cancellator
+            cancellator: swiftCommandState.cancellator
         )
 
-        let graph = try workspace.loadPackageGraph(
+        let graph = try await workspace.loadPackageGraph(
             rootPath: baselinePackageRoot,
             observabilityScope: self.observabilityScope
         )
@@ -124,42 +133,48 @@ struct APIDigesterBaselineDumper {
         }
 
         // Update the data path input build parameters so it's built in the sandbox.
-        var buildParameters = inputBuildParameters
-        buildParameters.dataPath = workspace.location.scratchDirectory
+        var productsBuildParameters = productsBuildParameters
+        productsBuildParameters.dataPath = workspace.location.scratchDirectory
 
         // Build the baseline module.
         // FIXME: We need to implement the build tool invocation closure here so that build tool plugins work with the APIDigester. rdar://86112934
-        let buildSystem = try swiftTool.createBuildSystem(
+        let buildSystem = try await swiftCommandState.createBuildSystem(
             explicitBuildSystem: .native,
             cacheBuildManifest: false,
-            customBuildParameters: buildParameters,
-            customPackageGraphLoader: { graph }
+            productsBuildParameters: productsBuildParameters,
+            toolsBuildParameters: toolsBuildParameters,
+            packageGraphLoader: { graph }
         )
-        try buildSystem.build()
+        let buildResult = try await buildSystem.build(subset: .allExcludingTests, buildOutputs: [.buildPlan])
+
+        guard let buildPlan = buildResult.buildPlan else {
+            throw Diagnostics.fatalError
+        }
 
         // Dump the SDK JSON.
-        try swiftTool.fileSystem.createDirectory(baselineDir, recursive: true)
-        let group = DispatchGroup()
-        let semaphore = DispatchSemaphore(value: Int(buildParameters.workers))
-        let errors = ThreadSafeArrayStore<Swift.Error>()
-        for module in modulesToDiff {
-            semaphore.wait()
-            DispatchQueue.sharedConcurrent.async(group: group) {
-                do {
-                    try apiDigesterTool.emitAPIBaseline(
-                        to: baselinePath(module),
-                        for: module,
-                        buildPlan: buildSystem.buildPlan
-                    )
-                } catch {
-                    errors.append(error)
+        try swiftCommandState.fileSystem.createDirectory(baselineDir, recursive: true)
+
+        let errors = await withTaskGroup(of: Error?.self) { group in
+            for module in modulesToDiff {
+                group.addTask {
+                    do {
+                        try apiDigesterTool.emitAPIBaseline(
+                            to: baselinePath(module),
+                            for: module,
+                            buildPlan: buildPlan
+                        )
+                        return nil
+                    } catch {
+                        return error
+                    }
                 }
-                semaphore.signal()
+            }
+            return await group.compactMap { $0 }.reduce(into: []) {
+                $0.append($1)
             }
         }
-        group.wait()
 
-        for error in errors.get() {
+        for error in errors {
             observabilityScope.emit(error)
         }
         if observabilityScope.errorsReported {
@@ -196,7 +211,7 @@ public struct SwiftAPIDigester {
         let result = try runTool(args)
 
         if !self.fileSystem.exists(outputPath) {
-            throw Error.failedToGenerateBaseline(module: module)
+            throw Error.failedToGenerateBaseline(module: module, output: (try? result.utf8Output()) ?? "", error: (try? result.utf8stderrOutput()) ?? "")
         }
 
         try self.fileSystem.readFileContents(outputPath).withData { data in
@@ -247,9 +262,9 @@ public struct SwiftAPIDigester {
         }
     }
 
-    @discardableResult private func runTool(_ args: [String]) throws -> ProcessResult {
+    @discardableResult private func runTool(_ args: [String]) throws -> AsyncProcessResult {
         let arguments = [tool.pathString] + args
-        let process = TSCBasic.Process(
+        let process = AsyncProcess(
             arguments: arguments,
             outputRedirection: .collect(redirectStderr: true)
         )
@@ -260,14 +275,14 @@ public struct SwiftAPIDigester {
 
 extension SwiftAPIDigester {
     public enum Error: Swift.Error, CustomStringConvertible {
-        case failedToGenerateBaseline(module: String)
+        case failedToGenerateBaseline(module: String, output: String, error: String)
         case failedToValidateBaseline(module: String)
         case noSymbolsInBaseline(module: String, toolOutput: String)
 
         public var description: String {
             switch self {
-            case .failedToGenerateBaseline(let module):
-                return "failed to generate baseline for \(module)"
+            case .failedToGenerateBaseline(let module, let output, let error):
+                return "failed to generate baseline for \(module) (output: \(output), error: \(error)"
             case .failedToValidateBaseline(let module):
                 return "failed to validate baseline for \(module)"
             case .noSymbolsInBaseline(let module, let toolOutput):
@@ -301,20 +316,22 @@ extension BuildParameters {
     }
 }
 
-extension PackageGraph {
+extension ModulesGraph {
     /// The list of modules that should be used as an input to the API digester.
     var apiDigesterModules: [String] {
         self.rootPackages
             .flatMap(\.products)
             .filter { $0.type.isLibrary }
-            .flatMap(\.targets)
-            .filter { $0.underlyingTarget is SwiftTarget }
+            .flatMap(\.modules)
+            .filter { $0.underlying is SwiftModule }
             .map { $0.c99name }
     }
 }
 
-extension SerializedDiagnostics.SourceLocation: DiagnosticLocation {
+extension SerializedDiagnostics.SourceLocation {
     public var description: String {
         return "\(filename):\(line):\(column)"
     }
 }
+
+extension SerializedDiagnostics.SourceLocation: @retroactive DiagnosticLocation {}

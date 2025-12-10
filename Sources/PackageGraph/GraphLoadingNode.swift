@@ -10,17 +10,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Basics
 import PackageLoading
 import PackageModel
-import TSCBasic
 
 /// A node used while loading the packages in a resolved graph.
 ///
 /// This node uses the product filter that was already finalized during resolution.
 ///
-/// - SeeAlso: DependencyResolutionNode
+/// - SeeAlso: ``DependencyResolutionNode``
 public struct GraphLoadingNode: Equatable, Hashable {
-
     /// The package identity.
     public let identity: PackageIdentity
 
@@ -30,39 +29,41 @@ public struct GraphLoadingNode: Equatable, Hashable {
     /// The product filter applied to the package.
     public let productFilter: ProductFilter
 
-    /// The file system to use for loading the given package.
-    public let fileSystem: FileSystem
+    /// The enabled traits for this package.
+    package var enabledTraits: EnabledTraits
 
-    public init(identity: PackageIdentity, manifest: Manifest, productFilter: ProductFilter, fileSystem: FileSystem) {
+    public init(
+        identity: PackageIdentity,
+        manifest: Manifest,
+        productFilter: ProductFilter,
+        enabledTraits: EnabledTraits
+    ) throws {
         self.identity = identity
         self.manifest = manifest
         self.productFilter = productFilter
-        self.fileSystem = fileSystem
+        self.enabledTraits = enabledTraits
     }
 
     /// Returns the dependencies required by this node.
-    internal func requiredDependencies() -> [PackageDependency] {
-        return manifest.dependenciesRequired(for: productFilter)
+    var requiredDependencies: [PackageDependency] {
+        guard let requiredDeps = try? self.manifest.dependenciesRequired(for: self.productFilter, enabledTraits) else {
+            return []
+        }
+        return requiredDeps
     }
 
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(identity)
-        hasher.combine(manifest)
-        hasher.combine(productFilter)
-    }
-
-    public static func == (lhs: GraphLoadingNode, rhs: GraphLoadingNode) -> Bool {
-        return lhs.identity == rhs.identity && lhs.manifest == rhs.manifest && lhs.productFilter == rhs.productFilter
+    var traitGuardedDependencies: [PackageDependency] {
+        self.manifest.dependenciesTraitGuarded(withEnabledTraits: self.enabledTraits)
     }
 }
 
 extension GraphLoadingNode: CustomStringConvertible {
     public var description: String {
-        switch productFilter {
+        switch self.productFilter {
         case .everything:
-            return self.identity.description
+            self.identity.description
         case .specific(let set):
-            return "\(self.identity.description)[\(set.sorted().joined(separator: ", "))]"
+            "\(self.identity.description)[\(set.sorted().joined(separator: ", "))]"
         }
     }
 }

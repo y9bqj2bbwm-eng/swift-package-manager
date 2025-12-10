@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2020 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2023 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -12,8 +12,10 @@
 
 import Basics
 import Foundation
-import TSCBasic
+import OrderedCollections
 import PackageModel
+
+import struct TSCBasic.ByteString
 
 /// The Project Interchange Format (PIF) is a structured representation of the
 /// project model created by clients (Xcode/SwiftPM) to send to XCBuild.
@@ -912,7 +914,7 @@ public enum PIF {
             case ENABLE_TESTABILITY
             case ENABLE_TESTING_SEARCH_PATHS
             case ENTITLEMENTS_REQUIRED
-            case EXECUTABLE_NAME
+            case EXECUTABLE_PREFIX
             case GENERATE_INFOPLIST_FILE
             case GCC_C_LANGUAGE_STANDARD
             case GCC_OPTIMIZATION_LEVEL
@@ -940,8 +942,6 @@ public enum PIF {
             case INSTALL_PATH
             case SUPPORTS_MACCATALYST
             case SWIFT_SERIALIZE_DEBUGGING_OPTIONS
-            case SWIFT_FORCE_STATIC_LINK_STDLIB
-            case SWIFT_FORCE_DYNAMIC_LINK_STDLIB
             case SWIFT_INSTALL_OBJC_HEADER
             case SWIFT_OBJC_INTERFACE_HEADER_NAME
             case SWIFT_OBJC_INTERFACE_HEADER_DIR
@@ -953,9 +953,11 @@ public enum PIF {
             case USE_HEADERMAP
             case USES_SWIFTPM_UNSAFE_FLAGS
             case WATCHOS_DEPLOYMENT_TARGET
+            case XROS_DEPLOYMENT_TARGET
             case MARKETING_VERSION
             case CURRENT_PROJECT_VERSION
             case SWIFT_EMIT_MODULE_INTERFACE
+            case GENERATE_RESOURCE_ACCESSORS
         }
 
         public enum MultipleValueSetting: String, Codable {
@@ -999,7 +1001,7 @@ public enum PIF {
             }
 
             public var conditions: [String] {
-                let filters = [PlatformsCondition(platforms: [packageModelPlatform])].toPlatformFilters().map { (filter: PIF.PlatformFilter) -> String in
+                let filters = [PackageCondition(platforms: [packageModelPlatform])].toPlatformFilters().map { filter in
                     if filter.environment.isEmpty {
                         return filter.platform
                     } else {
@@ -1010,10 +1012,10 @@ public enum PIF {
             }
         }
 
-        public private(set) var platformSpecificSingleValueSettings = [Platform: [SingleValueSetting: String]]()
-        public private(set) var platformSpecificMultipleValueSettings = [Platform: [MultipleValueSetting: [String]]]()
-        public private(set) var singleValueSettings: [SingleValueSetting: String] = [:]
-        public private(set) var multipleValueSettings: [MultipleValueSetting: [String]] = [:]
+        public private(set) var platformSpecificSingleValueSettings = OrderedDictionary<Platform, OrderedDictionary<SingleValueSetting, String>>()
+        public private(set) var platformSpecificMultipleValueSettings = OrderedDictionary<Platform, OrderedDictionary<MultipleValueSetting, [String]>>()
+        public private(set) var singleValueSettings: OrderedDictionary<SingleValueSetting, String> = [:]
+        public private(set) var multipleValueSettings: OrderedDictionary<MultipleValueSetting, [String]> = [:]
 
         public subscript(_ setting: SingleValueSetting) -> String? {
             get { singleValueSettings[setting] }
@@ -1107,16 +1109,26 @@ public enum PIF {
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
 
-            platformSpecificSingleValueSettings = try container.decodeIfPresent([Platform: [SingleValueSetting: String]].self, forKey: .platformSpecificSingleValueSettings) ?? .init()
-            platformSpecificMultipleValueSettings = try container.decodeIfPresent([Platform: [MultipleValueSetting: [String]]].self, forKey: .platformSpecificMultipleValueSettings) ?? .init()
-            singleValueSettings = try container.decodeIfPresent([SingleValueSetting: String].self, forKey: .singleValueSettings) ?? [:]
-            multipleValueSettings = try container.decodeIfPresent([MultipleValueSetting: [String]] .self, forKey: .multipleValueSettings) ?? [:]
+            platformSpecificSingleValueSettings = try container.decodeIfPresent(OrderedDictionary<Platform, OrderedDictionary<SingleValueSetting, String>>.self, forKey: .platformSpecificSingleValueSettings) ?? .init()
+            platformSpecificMultipleValueSettings = try container.decodeIfPresent(OrderedDictionary<Platform, OrderedDictionary<MultipleValueSetting, [String]>>.self, forKey: .platformSpecificMultipleValueSettings) ?? .init()
+            singleValueSettings = try container.decodeIfPresent(OrderedDictionary<SingleValueSetting, String>.self, forKey: .singleValueSettings) ?? [:]
+            multipleValueSettings = try container.decodeIfPresent(OrderedDictionary<MultipleValueSetting, [String]>.self, forKey: .multipleValueSettings) ?? [:]
         }
     }
 }
 
 /// Represents a filetype recognized by the Xcode build system.
 public struct XCBuildFileType: CaseIterable {
+    public static let xcassets: XCBuildFileType = XCBuildFileType(
+        fileType: "xcassets",
+        fileTypeIdentifier: "folder.abstractassetcatalog"
+    )
+
+    public static let xcstrings: XCBuildFileType = XCBuildFileType(
+        fileType: "xcstrings",
+        fileTypeIdentifier: "text.json.xcstrings"
+    )
+
     public static let xcdatamodeld: XCBuildFileType = XCBuildFileType(
         fileType: "xcdatamodeld",
         fileTypeIdentifier: "wrapper.xcdatamodeld"
@@ -1133,6 +1145,8 @@ public struct XCBuildFileType: CaseIterable {
     )
 
     public static let allCases: [XCBuildFileType] = [
+        .xcassets,
+        .xcstrings,
         .xcdatamodeld,
         .xcdatamodel,
         .xcmappingmodel,
@@ -1214,6 +1228,8 @@ extension PIF.FileReference {
 
         case "xcassets":
             return "folder.assetcatalog"
+        case "xcstrings":
+            return "text.json.xcstrings"
         case "storyboard":
             return "file.storyboard"
         case "xib":

@@ -12,12 +12,14 @@ add_library(PackageModel
   BuildEnvironment.swift
   BuildFlags.swift
   BuildSettings.swift
-  Destination.swift
-  DestinationConfigurationStore.swift
-  DestinationBundle.swift
+  DependencyMapper.swift
   Diagnostics.swift
+  EnabledTrait.swift
   IdentityResolver.swift
+  InstalledSwiftPMConfiguration.swift
   Manifest/Manifest.swift
+  Manifest/Manifest+Traits.swift
+  Manifest/TraitConfiguration.swift
   Manifest/PackageConditionDescription.swift
   Manifest/PackageDependencyDescription.swift
   Manifest/PlatformDescription.swift
@@ -25,8 +27,15 @@ add_library(PackageModel
   Manifest/SystemPackageProviderDescription.swift
   Manifest/TargetBuildSettingDescription.swift
   Manifest/TargetDescription.swift
+  Manifest/TraitDescription.swift
   ManifestSourceGeneration.swift
   MinimumDeploymentTarget.swift
+  Module/BinaryModule.swift
+  Module/ClangModule.swift
+  Module/PluginModule.swift
+  Module/SwiftModule.swift
+  Module/SystemLibraryModule.swift
+  Module/Module.swift
   ModuleMapType.swift
   PackageModel.swift
   PackageIdentity.swift
@@ -44,9 +53,13 @@ add_library(PackageModel
   Sources.swift
   SupportedLanguageExtension.swift
   SwiftLanguageVersion.swift
-  Target.swift
+  SwiftSDKs/SwiftSDK.swift
+  SwiftSDKs/SwiftSDKConfigurationStore.swift
+  SwiftSDKs/SwiftSDKBundle.swift
+  SwiftSDKs/SwiftSDKBundleStore.swift
   Toolchain.swift
   ToolchainConfiguration.swift
+  Toolchain+SupportedFeatures.swift
   Toolset.swift
   ToolsVersion.swift
   ToolsVersionSpecificationGeneration.swift
@@ -60,10 +73,8 @@ target_link_libraries(PackageModel PUBLIC
 set_target_properties(PackageModel PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_Swift_MODULE_DIRECTORY})
 
-if(USE_CMAKE_INSTALL)
 install(TARGETS PackageModel
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
-endif()
 set_property(GLOBAL APPEND PROPERTY SwiftPM_EXPORTS PackageModel)

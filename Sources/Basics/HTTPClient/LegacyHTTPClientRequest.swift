@@ -12,10 +12,7 @@
 
 import Foundation
 
-import struct TSCBasic.AbsolutePath
-import protocol TSCBasic.FileSystem
-
-public struct LegacyHTTPClientRequest {
+public struct LegacyHTTPClientRequest: Sendable {
     public let kind: Kind
     public let url: URL
     public var headers: HTTPClientHeaders
@@ -73,14 +70,15 @@ public struct LegacyHTTPClientRequest {
         }
     }
 
-    public typealias FileMoveCompletion = @Sendable (Error?) -> ()
+    public typealias FileMoveCompletion = @Sendable (Error?)
+        -> Void
 
-    public enum Kind {
+    public enum Kind: Sendable {
         case generic(HTTPMethod)
         case download(fileSystem: FileSystem, destination: AbsolutePath)
     }
 
-    public struct Options {
+    public struct Options: Sendable {
         public init(
             addUserAgent: Bool = true,
             validResponseCodes: [Int]? = nil,

@@ -20,12 +20,12 @@ import struct TSCUtility.Version
 
 public struct FilePackageFingerprintStorage: PackageFingerprintStorage {
     let fileSystem: FileSystem
-    let directoryPath: AbsolutePath
+    let directoryPath: Basics.AbsolutePath
 
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    public init(fileSystem: FileSystem, directoryPath: AbsolutePath) {
+    public init(fileSystem: FileSystem, directoryPath: Basics.AbsolutePath) {
         self.fileSystem = fileSystem
         self.directoryPath = directoryPath
 
@@ -36,17 +36,12 @@ public struct FilePackageFingerprintStorage: PackageFingerprintStorage {
     public func get(
         package: PackageIdentity,
         version: Version,
-        observabilityScope: ObservabilityScope,
-        callbackQueue: DispatchQueue,
-        callback: @escaping (Result<[Fingerprint.Kind: [Fingerprint.ContentType: Fingerprint]], Error>)
-            -> Void
-    ) {
-        self.get(
+        observabilityScope: ObservabilityScope
+    ) throws -> [Fingerprint.Kind: [Fingerprint.ContentType: Fingerprint]] {
+        try self.get(
             reference: package,
             version: version,
-            observabilityScope: observabilityScope,
-            callbackQueue: callbackQueue,
-            callback: callback
+            observabilityScope: observabilityScope
         )
     }
 
@@ -54,34 +49,25 @@ public struct FilePackageFingerprintStorage: PackageFingerprintStorage {
         package: PackageIdentity,
         version: Version,
         fingerprint: Fingerprint,
-        observabilityScope: ObservabilityScope,
-        callbackQueue: DispatchQueue,
-        callback: @escaping (Result<Void, Error>) -> Void
-    ) {
-        self.put(
+        observabilityScope: ObservabilityScope
+    ) throws {
+        try self.put(
             reference: package,
             version: version,
             fingerprint: fingerprint,
-            observabilityScope: observabilityScope,
-            callbackQueue: callbackQueue,
-            callback: callback
+            observabilityScope: observabilityScope
         )
     }
 
     public func get(
         package: PackageReference,
         version: Version,
-        observabilityScope: ObservabilityScope,
-        callbackQueue: DispatchQueue,
-        callback: @escaping (Result<[Fingerprint.Kind: [Fingerprint.ContentType: Fingerprint]], Error>)
-            -> Void
-    ) {
-        self.get(
+        observabilityScope: ObservabilityScope
+    ) throws -> [Fingerprint.Kind: [Fingerprint.ContentType: Fingerprint]] {
+        try self.get(
             reference: package,
             version: version,
-            observabilityScope: observabilityScope,
-            callbackQueue: callbackQueue,
-            callback: callback
+            observabilityScope: observabilityScope
         )
     }
 
@@ -89,84 +75,61 @@ public struct FilePackageFingerprintStorage: PackageFingerprintStorage {
         package: PackageReference,
         version: Version,
         fingerprint: Fingerprint,
-        observabilityScope: ObservabilityScope,
-        callbackQueue: DispatchQueue,
-        callback: @escaping (Result<Void, Error>) -> Void
-    ) {
-        self.put(
+        observabilityScope: ObservabilityScope
+    ) throws {
+        try self.put(
             reference: package,
             version: version,
             fingerprint: fingerprint,
-            observabilityScope: observabilityScope,
-            callbackQueue: callbackQueue,
-            callback: callback
+            observabilityScope: observabilityScope
         )
     }
 
     private func get(
         reference: FingerprintReference,
         version: Version,
-        observabilityScope: ObservabilityScope,
-        callbackQueue: DispatchQueue,
-        callback: @escaping (Result<[Fingerprint.Kind: [Fingerprint.ContentType: Fingerprint]], Error>)
-            -> Void
-    ) {
-        let callback = self.makeAsync(callback, on: callbackQueue)
-
-        do {
-            let packageFingerprints = try self.withLock {
-                try self.loadFromDisk(reference: reference)
-            }
-
-            guard let fingerprints = packageFingerprints[version] else {
-                throw PackageFingerprintStorageError.notFound
-            }
-
-            callback(.success(fingerprints))
-        } catch {
-            callback(.failure(error))
+        observabilityScope: ObservabilityScope
+    ) throws -> [Fingerprint.Kind: [Fingerprint.ContentType: Fingerprint]] {
+        let packageFingerprints = try self.withLock {
+            try self.loadFromDisk(reference: reference)
         }
+
+        guard let fingerprints = packageFingerprints[version] else {
+            throw PackageFingerprintStorageError.notFound
+        }
+        return fingerprints
     }
 
     private func put(
         reference: FingerprintReference,
         version: Version,
         fingerprint: Fingerprint,
-        observabilityScope: ObservabilityScope,
-        callbackQueue: DispatchQueue,
-        callback: @escaping (Result<Void, Error>) -> Void
-    ) {
-        let callback = self.makeAsync(callback, on: callbackQueue)
+        observabilityScope: ObservabilityScope
+    ) throws {
+        try self.withLock {
+            var packageFingerprints = try self.loadFromDisk(reference: reference)
 
-        do {
-            try self.withLock {
-                var packageFingerprints = try self.loadFromDisk(reference: reference)
-
-                if let existing = packageFingerprints[version]?[fingerprint.origin.kind]?[fingerprint.contentType] {
-                    // Error if we try to write a different fingerprint
-                    guard fingerprint == existing else {
-                        throw PackageFingerprintStorageError.conflict(given: fingerprint, existing: existing)
-                    }
-                    // Don't need to do anything if fingerprints are the same
-                    return
+            if let existing = packageFingerprints[version]?[fingerprint.origin.kind]?[fingerprint.contentType] {
+                // Error if we try to write a different fingerprint
+                guard fingerprint == existing else {
+                    throw PackageFingerprintStorageError.conflict(given: fingerprint, existing: existing)
                 }
-
-                var fingerprintsForVersion = packageFingerprints.removeValue(forKey: version) ?? [:]
-                var fingerprintsForKind = fingerprintsForVersion.removeValue(forKey: fingerprint.origin.kind) ?? [:]
-                fingerprintsForKind[fingerprint.contentType] = fingerprint
-                fingerprintsForVersion[fingerprint.origin.kind] = fingerprintsForKind
-                packageFingerprints[version] = fingerprintsForVersion
-
-                try self.saveToDisk(reference: reference, fingerprints: packageFingerprints)
+                // Don't need to do anything if fingerprints are the same
+                return
             }
-            callback(.success(()))
-        } catch {
-            callback(.failure(error))
+
+            var fingerprintsForVersion = packageFingerprints.removeValue(forKey: version) ?? [:]
+            var fingerprintsForKind = fingerprintsForVersion.removeValue(forKey: fingerprint.origin.kind) ?? [:]
+            fingerprintsForKind[fingerprint.contentType] = fingerprint
+            fingerprintsForVersion[fingerprint.origin.kind] = fingerprintsForKind
+            packageFingerprints[version] = fingerprintsForVersion
+
+            try self.saveToDisk(reference: reference, fingerprints: packageFingerprints)
         }
     }
 
     private func loadFromDisk(reference: FingerprintReference) throws -> PackageFingerprints {
-        let path = try self.directoryPath.appending(component: reference.fingerprintsFilename())
+        let path = try self.directoryPath.appending(component: reference.fingerprintsFilename)
 
         guard self.fileSystem.exists(path) else {
             return .init()
@@ -186,8 +149,8 @@ public struct FilePackageFingerprintStorage: PackageFingerprintStorage {
         }
 
         let buffer = try StorageModel.encode(packageFingerprints: fingerprints, encoder: self.encoder)
-        let path = try self.directoryPath.appending(component: reference.fingerprintsFilename())
-        try self.fileSystem.writeFileContents(path, bytes: ByteString(buffer))
+        let path = try self.directoryPath.appending(component: reference.fingerprintsFilename)
+        try self.fileSystem.writeFileContents(path, data: buffer)
     }
 
     private func withLock<T>(_ body: () throws -> T) throws -> T {
@@ -266,15 +229,14 @@ private enum StorageModel {
 
                                 let fingerprintsByContentType = try Dictionary(
                                     throwingUniqueKeysWithValues: fingerprintsForKind.map { _, storedFingerprint in
-                                        guard let originURL = URL(string: storedFingerprint.origin) else {
-                                            throw SerializationError.invalidURL(storedFingerprint.origin)
-                                        }
-
                                         let origin: Fingerprint.Origin
                                         switch kind {
                                         case .sourceControl:
-                                            origin = .sourceControl(originURL)
+                                            origin = .sourceControl(SourceControlURL(storedFingerprint.origin))
                                         case .registry:
+                                            guard let originURL = URL(string: storedFingerprint.origin) else {
+                                                throw SerializationError.invalidURL(storedFingerprint.origin)
+                                            }
                                             origin = .registry(originURL)
                                         }
 
@@ -384,24 +346,27 @@ extension Fingerprint.ContentType {
 }
 
 protocol FingerprintReference {
-    func fingerprintsFilename() throws -> String
+    var fingerprintsFilename: String { get throws }
 }
 
 extension PackageIdentity: FingerprintReference {
-    func fingerprintsFilename() -> String {
+    var fingerprintsFilename: String {
         "\(self.description).json"
     }
 }
 
 extension PackageReference: FingerprintReference {
-    func fingerprintsFilename() throws -> String {
-        guard case .remoteSourceControl(let sourceControlURL) = self.kind else {
-            throw StringError("Package kind [\(self.kind)] does not support fingerprints")
+    var fingerprintsFilename: String {
+        get throws {
+            guard case .remoteSourceControl(let sourceControlURL) = self.kind else {
+                throw StringError("Package kind [\(self.kind)] does not support fingerprints")
+            }
+            
+            let canonicalLocation = CanonicalPackageLocation(sourceControlURL.absoluteString)
+            // Cannot use hashValue because it is not consistent across executions
+            let locationHash = canonicalLocation.description.sha256Checksum.prefix(8)
+            return "\(self.identity.description)-\(locationHash).json"
         }
-
-        let canonicalLocation = CanonicalPackageLocation(sourceControlURL.absoluteString)
-        let locationHash = String(format: "%02x", canonicalLocation.description.hashValue)
-        return "\(self.identity.description)-\(locationHash).json"
     }
 }
 

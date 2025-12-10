@@ -1,4 +1,4 @@
-// swift-tools-version: 999.0
+// swift-tools-version: 5.9
 import PackageDescription
 
 let package = Package(
@@ -8,7 +8,13 @@ let package = Package(
             name: "PluginScriptProduct",
             targets: [
                 "PluginScriptTarget"
-            ]
+            ],
+        ),
+        .library(
+            name: "MyLib",
+            targets: [
+                "MyLib",
+            ],
         ),
     ],
     targets: [
@@ -17,9 +23,10 @@ let package = Package(
             capability: .command(
                 intent: .custom(
                     verb: "do-something",
-                    description: "Do something"
-                )
-            )
+                    description: "Do something",
+                ),
+            ),
         ),
+        .target(name: "MyLib"),
     ]
 )

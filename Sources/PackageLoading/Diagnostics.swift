@@ -12,10 +12,9 @@
 
 import Basics
 import PackageModel
-import TSCBasic
 
 extension Basics.Diagnostic {
-    static func targetHasNoSources(name: String, type: TargetDescription.TargetType, shouldSuggestRelaxedSourceDir: Bool) -> Self {
+    static func targetHasNoSources(name: String, type: TargetDescription.TargetKind, shouldSuggestRelaxedSourceDir: Bool) -> Self {
         let folderName = PackageBuilder.suggestedPredefinedSourceDirectory(type: type)
         var clauses = ["Source files for target \(name) should be located under '\(folderName)/\(name)'"]
         if shouldSuggestRelaxedSourceDir {

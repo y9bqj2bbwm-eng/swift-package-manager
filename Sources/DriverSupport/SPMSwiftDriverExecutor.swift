@@ -10,10 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+@_spi(SwiftPMInternal)
 import Basics
+
 import SwiftDriver
 
-import protocol TSCBasic.FileSystem
 import class TSCBasic.Process
 import struct TSCBasic.ProcessResult
 
@@ -32,11 +33,11 @@ public final class SPMSwiftDriverExecutor: DriverExecutor {
     
     public let resolver: ArgsResolver
     let fileSystem: FileSystem
-    let env: EnvironmentVariables
-    
+    let env: Environment
+
     public init(resolver: ArgsResolver,
          fileSystem: FileSystem,
-         env: EnvironmentVariables) {
+         env: Environment) {
         self.resolver = resolver
         self.fileSystem = fileSystem
         self.env = env
@@ -55,9 +56,10 @@ public final class SPMSwiftDriverExecutor: DriverExecutor {
             throw Error.inPlaceExecutionUnsupported
         }
         
-        var childEnv = env
-        childEnv.merge(job.extraEnvironment, uniquingKeysWith: { (_, new) in new })
         
+        var childEnv = [String: String](env)
+        childEnv.merge(job.extraEnvironment, uniquingKeysWith: { (_, new) in new })
+
         let process = try Process.launchProcess(arguments: arguments, env: childEnv)
         return try process.waitUntilExit()
     }
@@ -70,7 +72,7 @@ public final class SPMSwiftDriverExecutor: DriverExecutor {
     }
     
     public func checkNonZeroExit(args: String..., environment: [String : String]) throws -> String {
-        return try TSCBasic.Process.checkNonZeroExit(arguments: args, environment: environment)
+        try AsyncProcess.checkNonZeroExit(arguments: args, environment: .init(environment))
     }
     
     public func description(of job: Job, forceResponseFiles: Bool) throws -> String {

@@ -10,14 +10,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-import TSCBasic
-
 /// Available runtime sanitizers.
 public enum Sanitizer: String, Encodable, CaseIterable {
     case address
     case thread
     case undefined
     case scudo
+    case fuzzer
 
     /// Return an established short name for a sanitizer, e.g. "asan".
     public var shortName: String {
@@ -26,6 +25,7 @@ public enum Sanitizer: String, Encodable, CaseIterable {
             case .thread: return "tsan"
             case .undefined: return "ubsan"
             case .scudo: return "scudo"
+            case .fuzzer: return "fuzzer"
         }
     }
 }

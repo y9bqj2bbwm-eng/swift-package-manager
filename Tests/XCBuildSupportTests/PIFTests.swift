@@ -12,11 +12,12 @@
 
 import XCTest
 import Basics
-import TSCBasic
 import PackageModel
 import SPMBuildCore
 import XCBuildSupport
-import SPMTestSupport
+import _InternalTestSupport
+
+import enum TSCBasic.JSON
 
 class PIFTests: XCTestCase {
     let topLevelObject = PIF.TopLevelObject(workspace:
@@ -67,7 +68,6 @@ class PIFTests: XCTestCase {
                                     buildSettings: {
                                         var settings = PIF.BuildSettings()
                                         settings[.TARGET_NAME] = "MyExecutable"
-                                        settings[.EXECUTABLE_NAME] = "my-exe"
                                         return settings
                                     }()
                                 ),
@@ -77,7 +77,6 @@ class PIFTests: XCTestCase {
                                     buildSettings: {
                                         var settings = PIF.BuildSettings()
                                         settings[.TARGET_NAME] = "MyExecutable"
-                                        settings[.EXECUTABLE_NAME] = "my-exe"
                                         settings[.SKIP_INSTALL] = "NO"
                                         return settings
                                     }()
@@ -214,10 +213,6 @@ class PIFTests: XCTestCase {
     )
 
     func testRoundTrip() throws {
-        // FIXME: Disabled because we need to store build settings in
-        // sorted dictionary in order to get deterministic output
-        // when encoding (SR-12587).
-      #if false
         let encoder = JSONEncoder.makeWithDefaults()
         if #available(macOS 10.13, *) {
             encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
@@ -230,11 +225,10 @@ class PIFTests: XCTestCase {
         let originalPIF = try encoder.encode(workspace)
         let decodedPIF = try encoder.encode(decodedWorkspace)
 
-        let originalString = String(data: originalPIF, encoding: .utf8)!
-        let decodedString = String(data: decodedPIF, encoding: .utf8)!
+        let originalString = String(decoding: originalPIF, as: UTF8.self)
+        let decodedString = String(decoding: decodedPIF, as: UTF8.self)
 
         XCTAssertEqual(originalString, decodedString)
-      #endif
     }
 
     func testEncodable() throws {
@@ -367,7 +361,6 @@ class PIFTests: XCTestCase {
             XCTAssertEqual(debugConfiguration["name"]?.string, "Debug")
             let debugSettings = debugConfiguration["buildSettings"]
             XCTAssertEqual(debugSettings?["TARGET_NAME"]?.string, "MyExecutable")
-            XCTAssertEqual(debugSettings?["EXECUTABLE_NAME"]?.string, "my-exe")
             XCTAssertEqual(debugConfiguration["impartedBuildProperties"]?.dictionary, ["buildSettings": JSON([:])])
 
             let releaseConfiguration = configurations[1]
@@ -375,7 +368,6 @@ class PIFTests: XCTestCase {
             XCTAssertEqual(releaseConfiguration["name"]?.string, "Release")
             let releaseSettings = releaseConfiguration["buildSettings"]
             XCTAssertEqual(releaseSettings?["TARGET_NAME"]?.string, "MyExecutable")
-            XCTAssertEqual(releaseSettings?["EXECUTABLE_NAME"]?.string, "my-exe")
             XCTAssertEqual(releaseSettings?["SKIP_INSTALL"]?.string, "NO")
             XCTAssertEqual(releaseConfiguration["impartedBuildProperties"]?.dictionary, ["buildSettings": JSON([:])])
         } else {

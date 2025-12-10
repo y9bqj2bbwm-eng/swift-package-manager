@@ -10,12 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-import SPMTestSupport
-import TSCBasic
-import XCTest
-
+import Basics
 @testable import PackageCollections
 @testable import PackageModel
+import _InternalTestSupport
+import XCTest
 
 final class PackageCollectionsModelTests: XCTestCase {
     func testLatestVersions() {
@@ -91,7 +90,7 @@ final class PackageCollectionsModelTests: XCTestCase {
     }
 
     func testSourceValidation_localFile() throws {
-        try fixture(name: "Collections", createGitRepo: false) { fixturePath in
+        try fixtureXCTest(name: "Collections", createGitRepo: false) { fixturePath in
             // File must exist in local FS
             let path = fixturePath.appending(components: "JSON", "good.json")
 

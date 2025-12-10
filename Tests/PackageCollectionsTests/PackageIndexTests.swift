@@ -14,17 +14,16 @@ import Basics
 import Foundation
 @testable import PackageCollections
 import PackageModel
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import XCTest
 
 class PackageIndexTests: XCTestCase {
-    func testGetPackageMetadata() throws {
+    func testGetPackageMetadata() async throws {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, disableCache: true)
         configuration.enabled = true
         
-        let repoURL = URL("https://github.com/octocat/Hello-World.git")
+        let repoURL = SourceControlURL("https://github.com/octocat/Hello-World.git")
         let packageIdentity = PackageIdentity(url: repoURL)
         let package = makeMockPackage(id: "test-package")
         let handler: LegacyHTTPClient.Handler = { request, _, completion in
@@ -46,13 +45,13 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, customHTTPClient: httpClient, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let metadata = try tsc_await { callback in index.getPackageMetadata(identity: .init(url: repoURL), location: repoURL.absoluteString, callback: callback) }
+        let metadata = try await index.getPackageMetadata(identity: .init(url: repoURL), location: repoURL.absoluteString)
         XCTAssertEqual(metadata.package.identity, package.identity)
         XCTAssert(metadata.collections.isEmpty)
         XCTAssertNotNil(metadata.provider)
     }
     
-    func testGetPackageMetadata_featureDisabled() {
+    func testGetPackageMetadata_featureDisabled() async {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, disableCache: true)
         configuration.enabled = false
@@ -60,26 +59,26 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let repoURL = URL("https://github.com/octocat/Hello-World.git")
-        XCTAssertThrowsError(try tsc_await { callback in index.getPackageMetadata(identity: .init(url: repoURL), location: repoURL.absoluteString, callback: callback) }) { error in
+        let repoURL = SourceControlURL("https://github.com/octocat/Hello-World.git")
+        await XCTAssertAsyncThrowsError(try await index.getPackageMetadata(identity: .init(url: repoURL), location: repoURL.absoluteString)) { error in
             XCTAssertEqual(error as? PackageIndexError, .featureDisabled)
         }
     }
     
-    func testGetPackageMetadata_notConfigured() {
+    func testGetPackageMetadata_notConfigured() async {
         var configuration = PackageIndexConfiguration(url: nil, disableCache: true)
         configuration.enabled = true
                 
         let index = PackageIndex(configuration: configuration, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let repoURL = URL("https://github.com/octocat/Hello-World.git")
-        XCTAssertThrowsError(try tsc_await { callback in index.getPackageMetadata(identity: .init(url: repoURL), location: repoURL.absoluteString, callback: callback) }) { error in
+        let repoURL = SourceControlURL("https://github.com/octocat/Hello-World.git")
+        await XCTAssertAsyncThrowsError(try await index.getPackageMetadata(identity: .init(url: repoURL), location: repoURL.absoluteString)) { error in
             XCTAssertEqual(error as? PackageIndexError, .notConfigured)
         }
     }
     
-    func testFindPackages() throws {
+    func testFindPackages() async throws {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, searchResultMaxItemsCount: 10, disableCache: true)
         configuration.enabled = true
@@ -107,7 +106,7 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, customHTTPClient: httpClient, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let result = try tsc_await { callback in index.findPackages(query, callback: callback) }
+        let result = try await index.findPackages(query)
         XCTAssertEqual(result.items.count, packages.count)
         for (i, item) in result.items.enumerated() {
             XCTAssertEqual(item.package.identity, packages[i].identity)
@@ -116,7 +115,7 @@ class PackageIndexTests: XCTestCase {
         }
     }
     
-    func testFindPackages_resultsLimit() throws {
+    func testFindPackages_resultsLimit() async throws {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, searchResultMaxItemsCount: 3, disableCache: true)
         configuration.enabled = true
@@ -145,7 +144,7 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, customHTTPClient: httpClient, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let result = try tsc_await { callback in index.findPackages(query, callback: callback) }
+        let result = try await index.findPackages(query)
         XCTAssertEqual(result.items.count, configuration.searchResultMaxItemsCount)
         for (i, item) in result.items.enumerated() {
             XCTAssertEqual(item.package.identity, packages[i].identity)
@@ -154,7 +153,7 @@ class PackageIndexTests: XCTestCase {
         }
     }
     
-    func testFindPackages_featureDisabled() {
+    func testFindPackages_featureDisabled() async {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, disableCache: true)
         configuration.enabled = false
@@ -162,24 +161,24 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        XCTAssertThrowsError(try tsc_await { callback in index.findPackages("foobar", callback: callback) }) { error in
+        await XCTAssertAsyncThrowsError(try await index.findPackages("foobar")) { error in
             XCTAssertEqual(error as? PackageIndexError, .featureDisabled)
         }
     }
     
-    func testFindPackages_notConfigured() {
+    func testFindPackages_notConfigured() async {
         var configuration = PackageIndexConfiguration(url: nil, disableCache: true)
         configuration.enabled = true
                 
         let index = PackageIndex(configuration: configuration, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        XCTAssertThrowsError(try tsc_await { callback in index.findPackages("foobar", callback: callback) }) { error in
+        await XCTAssertAsyncThrowsError(try await index.findPackages("foobar")) { error in
             XCTAssertEqual(error as? PackageIndexError, .notConfigured)
         }
     }
     
-    func testListPackages() throws {
+    func testListPackages() async throws {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, disableCache: true)
         configuration.enabled = true
@@ -210,14 +209,14 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, customHTTPClient: httpClient, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let result = try tsc_await { callback in index.listPackages(offset: offset, limit: limit, callback: callback) }
+        let result = try await index.listPackages(offset: offset, limit: limit)
         XCTAssertEqual(result.items.count, packages.count)
         XCTAssertEqual(result.offset, offset)
         XCTAssertEqual(result.limit, limit)
         XCTAssertEqual(result.total, total)
     }
     
-    func testListPackages_featureDisabled() {
+    func testListPackages_featureDisabled() async {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, disableCache: true)
         configuration.enabled = false
@@ -225,29 +224,29 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        XCTAssertThrowsError(try tsc_await { callback in index.listPackages(offset: 0, limit: 10, callback: callback) }) { error in
+        await XCTAssertAsyncThrowsError(try await index.listPackages(offset: 0, limit: 10)) { error in
             XCTAssertEqual(error as? PackageIndexError, .featureDisabled)
         }
     }
     
-    func testListPackages_notConfigured() {
+    func testListPackages_notConfigured() async {
         var configuration = PackageIndexConfiguration(url: nil, disableCache: true)
         configuration.enabled = true
                 
         let index = PackageIndex(configuration: configuration, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        XCTAssertThrowsError(try tsc_await { callback in index.listPackages(offset: 0, limit: 10, callback: callback) }) { error in
+        await XCTAssertAsyncThrowsError(try await index.listPackages(offset: 0, limit: 10)) { error in
             XCTAssertEqual(error as? PackageIndexError, .notConfigured)
         }
     }
     
-    func testAsPackageMetadataProvider() throws {
+    func testAsPackageMetadataProvider() async throws {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, disableCache: true)
         configuration.enabled = true
         
-        let repoURL = URL("https://github.com/octocat/Hello-World.git")
+        let repoURL = SourceControlURL("https://github.com/octocat/Hello-World.git")
         let packageIdentity = PackageIdentity(url: repoURL)
         let package = makeMockPackage(id: "test-package")
         let handler: LegacyHTTPClient.Handler = { request, _, completion in
@@ -269,11 +268,11 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, customHTTPClient: httpClient, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let metadata = try index.syncGet(identity: .init(url: repoURL), location: repoURL.absoluteString)
+        let metadata = try await index.syncGet(identity: .init(url: repoURL), location: repoURL.absoluteString)
         XCTAssertEqual(metadata.summary, package.summary)
     }
     
-    func testAsGetPackageMetadataProvider_featureDisabled() {
+    func testAsGetPackageMetadataProvider_featureDisabled() async {
         let url = URL("https://package-index.test")
         var configuration = PackageIndexConfiguration(url: url, disableCache: true)
         configuration.enabled = false
@@ -281,30 +280,28 @@ class PackageIndexTests: XCTestCase {
         let index = PackageIndex(configuration: configuration, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let repoURL = URL("https://github.com/octocat/Hello-World.git")
-        XCTAssertThrowsError(try index.syncGet(identity: .init(url: repoURL), location: repoURL.absoluteString)) { error in
+        let repoURL = SourceControlURL("https://github.com/octocat/Hello-World.git")
+        await XCTAssertAsyncThrowsError(try await index.syncGet(identity: .init(url: repoURL), location: repoURL.absoluteString)) { error in
             XCTAssertEqual(error as? PackageIndexError, .featureDisabled)
         }
     }
     
-    func testAsGetPackageMetadataProvider_notConfigured() {
+    func testAsGetPackageMetadataProvider_notConfigured() async {
         var configuration = PackageIndexConfiguration(url: nil, disableCache: true)
         configuration.enabled = true
                 
         let index = PackageIndex(configuration: configuration, callbackQueue: .sharedConcurrent, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try index.close()) }
         
-        let repoURL = URL("https://github.com/octocat/Hello-World.git")
-        XCTAssertThrowsError(try index.syncGet(identity: .init(url: repoURL), location: repoURL.absoluteString)) { error in
+        let repoURL = SourceControlURL("https://github.com/octocat/Hello-World.git")
+        await XCTAssertAsyncThrowsError(try await index.syncGet(identity: .init(url: repoURL), location: repoURL.absoluteString)) { error in
             XCTAssertEqual(error as? PackageIndexError, .notConfigured)
         }
     }
 }
 
 private extension PackageIndex {
-    func syncGet(identity: PackageIdentity, location: String) throws -> Model.PackageBasicMetadata {
-        try tsc_await { callback in
-            self.get(identity: identity, location: location) { result, _ in callback(result) }
-        }
+    func syncGet(identity: PackageIdentity, location: String) async throws -> Model.PackageBasicMetadata {
+        try await self.get(identity: identity, location: location).0.get()
     }
 }

@@ -10,16 +10,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+import _Concurrency
 import Dispatch
+import struct Foundation.Data
+import struct Foundation.Date
 import class Foundation.NSLock
 import class Foundation.OperationQueue
 import func Foundation.pow
-import struct Foundation.Data
-import struct Foundation.Date
 import struct Foundation.URL
 import struct Foundation.UUID
-import TSCBasic
-
 
 // MARK: - LegacyHTTPClient
 
@@ -27,9 +26,9 @@ public final class LegacyHTTPClient: Cancellable {
     public typealias Configuration = LegacyHTTPClientConfiguration
     public typealias Request = LegacyHTTPClientRequest
     public typealias Response = HTTPClientResponse
-    public typealias Handler = (Request, ProgressHandler?, @escaping (Result<Response, Error>) -> Void) -> Void
-    public typealias ProgressHandler = (_ bytesReceived: Int64, _ totalBytes: Int64?) throws -> Void
-    public typealias CompletionHandler = (Result<HTTPClientResponse, Error>) -> Void
+    public typealias Handler = (Request, ProgressHandler?, @escaping @Sendable (Result<Response, Error>) -> Void) -> Void
+    public typealias ProgressHandler = @Sendable (_ bytesReceived: Int64, _ totalBytes: Int64?) throws -> Void
+    public typealias CompletionHandler = @Sendable (Result<HTTPClientResponse, Error>) -> Void
 
     public var configuration: LegacyHTTPClientConfiguration
     private let underlying: Handler
@@ -50,7 +49,7 @@ public final class LegacyHTTPClient: Cancellable {
     private var outstandingRequests = ThreadSafeKeyValueStore<UUID, OutstandingRequest>()
 
     // static to share across instances of the http client
-    private static var hostsErrorsLock = NSLock()
+    private static let hostsErrorsLock = NSLock()
     private static var hostsErrors = [String: [Date]]()
 
     public init(configuration: LegacyHTTPClientConfiguration = .init(), handler: Handler? = nil) {
@@ -108,7 +107,10 @@ public final class LegacyHTTPClient: Cancellable {
             request.headers.add(name: "User-Agent", value: "SwiftPackageManager/\(SwiftVersion.current.displayString)")
         }
 
-        if let authorization = request.options.authorizationProvider?(request.url), !request.headers.contains("Authorization") {
+        if let authorization = request.options.authorizationProvider?(request.url),
+           !authorization.isEmpty,
+           !request.headers.contains("Authorization")
+        {
             request.headers.add(name: "Authorization", value: authorization)
         }
         // execute
@@ -120,7 +122,7 @@ public final class LegacyHTTPClient: Cancellable {
             requestNumber: 0,
             observabilityScope: observabilityScope,
             progress: progress.map { handler in
-                { received, expected in
+                { @Sendable received, expected in
                     // call back on the requested queue
                     callbackQueue.async {
                         do {
@@ -235,7 +237,9 @@ public final class LegacyHTTPClient: Cancellable {
                             }
                         }
                         // check for valid response codes
-                        if let validResponseCodes = request.options.validResponseCodes, !validResponseCodes.contains(response.statusCode) {
+                        if let validResponseCodes = request.options.validResponseCodes,
+                           !validResponseCodes.contains(response.statusCode)
+                        {
                             return completion(.failure(HTTPClientError.badResponseStatusCode(response.statusCode)))
                         }
                         completion(.success(response))
@@ -303,13 +307,24 @@ public final class LegacyHTTPClient: Cancellable {
     }
 }
 
-public extension LegacyHTTPClient {
-    func head(
+extension LegacyHTTPClient {
+    public func head(
+        _ url: URL,
+        headers: HTTPClientHeaders = .init(),
+        options: Request.Options = .init(),
+        observabilityScope: ObservabilityScope? = .none
+    ) async throws -> Response {
+        try await withCheckedThrowingContinuation { continuation in
+            self.head(url, headers: headers, options: options, completion: { continuation.resume(with: $0) })
+        }
+    }
+    @available(*, noasync, message: "Use the async alternative")
+    public func head(
         _ url: URL,
         headers: HTTPClientHeaders = .init(),
         options: Request.Options = .init(),
         observabilityScope: ObservabilityScope? = .none,
-        completion: @escaping (Result<Response, Error>) -> Void
+        completion: @Sendable @escaping (Result<Response, Error>) -> Void
     ) {
         self.execute(
             Request(method: .head, url: url, headers: headers, body: nil, options: options),
@@ -318,12 +333,23 @@ public extension LegacyHTTPClient {
         )
     }
 
-    func get(
+    public func get(
+        _ url: URL,
+        headers: HTTPClientHeaders = .init(),
+        options: Request.Options = .init(),
+        observabilityScope: ObservabilityScope? = .none
+    ) async throws -> Response {
+        try await withCheckedThrowingContinuation { continuation in
+            self.get(url, headers: headers, options: options, completion: { continuation.resume(with: $0) })
+        }
+    }
+    @available(*, noasync, message: "Use the async alternative")
+    public func get(
         _ url: URL,
         headers: HTTPClientHeaders = .init(),
         options: Request.Options = .init(),
         observabilityScope: ObservabilityScope? = .none,
-        completion: @escaping (Result<Response, Error>) -> Void
+        completion: @Sendable @escaping (Result<Response, Error>) -> Void
     ) {
         self.execute(
             Request(method: .get, url: url, headers: headers, body: nil, options: options),
@@ -332,13 +358,13 @@ public extension LegacyHTTPClient {
         )
     }
 
-    func put(
+    public func put(
         _ url: URL,
         body: Data?,
         headers: HTTPClientHeaders = .init(),
         options: Request.Options = .init(),
         observabilityScope: ObservabilityScope? = .none,
-        completion: @escaping (Result<Response, Error>) -> Void
+        completion: @Sendable @escaping (Result<Response, Error>) -> Void
     ) {
         self.execute(
             Request(method: .put, url: url, headers: headers, body: body, options: options),
@@ -347,13 +373,13 @@ public extension LegacyHTTPClient {
         )
     }
 
-    func post(
+    public func post(
         _ url: URL,
         body: Data?,
         headers: HTTPClientHeaders = .init(),
         options: Request.Options = .init(),
         observabilityScope: ObservabilityScope? = .none,
-        completion: @escaping (Result<Response, Error>) -> Void
+        completion: @Sendable @escaping (Result<Response, Error>) -> Void
     ) {
         self.execute(
             Request(method: .post, url: url, headers: headers, body: body, options: options),
@@ -362,12 +388,12 @@ public extension LegacyHTTPClient {
         )
     }
 
-    func delete(
+    public func delete(
         _ url: URL,
         headers: HTTPClientHeaders = .init(),
         options: Request.Options = .init(),
         observabilityScope: ObservabilityScope? = .none,
-        completion: @escaping (Result<Response, Error>) -> Void
+        completion: @Sendable @escaping (Result<Response, Error>) -> Void
     ) {
         self.execute(
             Request(method: .delete, url: url, headers: headers, body: nil, options: options),
@@ -380,7 +406,7 @@ public extension LegacyHTTPClient {
 // MARK: - LegacyHTTPClientConfiguration
 
 public struct LegacyHTTPClientConfiguration {
-    public typealias AuthorizationProvider = (URL) -> String?
+    public typealias AuthorizationProvider = @Sendable (URL) -> String?
 
     public var requestHeaders: HTTPClientHeaders?
     public var requestTimeout: DispatchTimeInterval?

@@ -12,28 +12,28 @@
 
 import struct Foundation.Date
 
-/// A `Sendable` storage that allows access from concurrently running tasks in 
+/// A `Sendable` storage that allows access from concurrently running tasks in
 /// an `async` closure. This type serves as a replacement for `ThreadSafeBox`
 /// implemented with Swift Concurrency primitives.
 public actor SendableBox<Value: Sendable> {
-    init(_ value: Value? = nil) {
+    public init(_ value: Value) {
         self.value = value
     }
 
-    var value: Value?
+    public var value: Value
+
+    public func set(_ value: Value) {
+        self.value = value
+    }
 }
 
 extension SendableBox where Value == Int {
     func increment() {
-        if let value {
-            self.value = value + 1
-        }
+        self.value = value + 1
     }
 
     func decrement() {
-        if let value {
-            self.value = value - 1
-        }
+        self.value = value - 1
     }
 }
 

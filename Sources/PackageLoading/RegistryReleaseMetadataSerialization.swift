@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-@_implementationOnly import Foundation
+import Foundation
 import PackageModel
 import TSCBasic
 
@@ -21,13 +21,13 @@ public enum RegistryReleaseMetadataStorage {
     private static let encoder = JSONEncoder.makeWithDefaults()
     private static let decoder = JSONDecoder.makeWithDefaults()
 
-    public static func save(_ metadata: RegistryReleaseMetadata, to path: AbsolutePath, fileSystem: FileSystem) throws {
+    public static func save(_ metadata: RegistryReleaseMetadata, to path: Basics.AbsolutePath, fileSystem: FileSystem) throws {
         let codableMetadata = CodableRegistryReleaseMetadata(metadata)
         let data = try Self.encoder.encode(codableMetadata)
         try fileSystem.writeFileContents(path, data: data)
     }
 
-    public static func load(from path: AbsolutePath, fileSystem: FileSystem) throws -> RegistryReleaseMetadata {
+    public static func load(from path: Basics.AbsolutePath, fileSystem: FileSystem) throws -> RegistryReleaseMetadata {
         let codableMetadata = try Self.decoder.decode(
             path: path,
             fileSystem: fileSystem,
@@ -44,7 +44,7 @@ private struct CodableRegistryReleaseMetadata: Codable {
     public let description: String?
     public let licenseURL: URL?
     public let readmeURL: URL?
-    public let scmRepositoryURLs: [URL]?
+    public let scmRepositoryURLs: [SourceControlURL]?
 
     init(_ seed: RegistryReleaseMetadata) {
         switch seed.source {

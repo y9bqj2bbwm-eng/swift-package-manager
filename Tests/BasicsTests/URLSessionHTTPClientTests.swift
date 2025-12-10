@@ -17,9 +17,12 @@ import Foundation
 // need to decide how to best deal with that
 import FoundationNetworking
 #endif
-import TSCBasic
-import TSCTestSupport
+import _InternalTestSupport
 import XCTest
+
+import struct TSCBasic.ByteString
+import enum TSCBasic.FileMode
+import struct TSCBasic.FileSystemError
 
 final class URLSessionHTTPClientTest: XCTestCase {
     func testHead() {
@@ -33,7 +36,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("HEAD", url) { request in
             self.assertRequestHeaders(request.allHTTPHeaderFields, expected: requestHeaders)
@@ -67,7 +70,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("GET", url) { request in
             self.assertRequestHeaders(request.allHTTPHeaderFields, expected: requestHeaders)
@@ -98,11 +101,11 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let url = URL("http://test")
         let requestHeaders = HTTPClientHeaders([HTTPClientHeaders.Item(name: UUID().uuidString, value: UUID().uuidString)])
-        let requestBody = UUID().uuidString.data(using: .utf8)
+        let requestBody = Data(UUID().uuidString.utf8)
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("POST", url) { request in
             // FIXME:
@@ -135,11 +138,11 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let url = URL("http://test")
         let requestHeaders = HTTPClientHeaders([HTTPClientHeaders.Item(name: UUID().uuidString, value: UUID().uuidString)])
-        let requestBody = UUID().uuidString.data(using: .utf8)
+        let requestBody = Data(UUID().uuidString.utf8)
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("PUT", url) { request in
             XCTAssertEqual(request.httpBody, requestBody)
@@ -174,7 +177,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("DELETE", url) { request in
             self.assertRequestHeaders(request.allHTTPHeaderFields, expected: requestHeaders)
@@ -284,7 +287,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
         #endif
         let netrcContent = "machine protected.downloader-tests.com login anonymous password qwerty"
         let netrc = try NetrcAuthorizationWrapper(underlying: NetrcParser.parse(netrcContent))
-        let authData = "anonymous:qwerty".data(using: .utf8)!
+        let authData = Data("anonymous:qwerty".utf8)
         let testAuthHeader = "Basic \(authData.base64EncodedString())"
 
         let configuration = URLSessionConfiguration.default
@@ -353,9 +356,10 @@ final class URLSessionHTTPClientTest: XCTestCase {
         // https://github.com/apple/swift-corelibs-foundation/pull/2593 tries to address the latter part
         try XCTSkipIf(true, "test is only supported on macOS")
         #endif
+        try XCTSkipIfPlatformCI()
         let netrcContent = "default login default password default"
         let netrc = try NetrcAuthorizationWrapper(underlying: NetrcParser.parse(netrcContent))
-        let authData = "default:default".data(using: .utf8)!
+        let authData = Data("default:default".utf8)
         let testAuthHeader = "Basic \(authData.base64EncodedString())"
 
         let configuration = URLSessionConfiguration.default
@@ -462,13 +466,13 @@ final class URLSessionHTTPClientTest: XCTestCase {
                 MockURLProtocol.sendResponse(statusCode: 200, headers: ["Content-Length": "1024"], for: request)
                 didStartLoadingExpectation.fulfill()
             }
-            wait(for: [didStartLoadingExpectation], timeout: 1.0)
+            wait(for: [didStartLoadingExpectation], timeout: 3.0)
 
             let urlRequest = URLRequest(request)
             MockURLProtocol.sendData(Data(count: 512), for: urlRequest)
-            wait(for: [progress50Expectation], timeout: 1.0)
+            wait(for: [progress50Expectation], timeout: 3.0)
             MockURLProtocol.sendError(clientError, for: urlRequest)
-            wait(for: [completionExpectation], timeout: 1.0)
+            wait(for: [completionExpectation], timeout: 3.0)
         }
     }
 
@@ -574,7 +578,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("HEAD", url) { request in
             self.assertRequestHeaders(request.allHTTPHeaderFields, expected: requestHeaders)
@@ -599,7 +603,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("GET", url) { request in
             self.assertRequestHeaders(request.allHTTPHeaderFields, expected: requestHeaders)
@@ -620,11 +624,11 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let url = URL("http://async-post-test")
         let requestHeaders = HTTPClientHeaders([HTTPClientHeaders.Item(name: UUID().uuidString, value: UUID().uuidString)])
-        let requestBody = UUID().uuidString.data(using: .utf8)
+        let requestBody = Data(UUID().uuidString.utf8)
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("POST", url) { request in
             // FIXME:
@@ -648,11 +652,11 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let url = URL("http://async-put-test")
         let requestHeaders = HTTPClientHeaders([HTTPClientHeaders.Item(name: UUID().uuidString, value: UUID().uuidString)])
-        let requestBody = UUID().uuidString.data(using: .utf8)
+        let requestBody = Data(UUID().uuidString.utf8)
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("PUT", url) { request in
             XCTAssertEqual(request.httpBody, requestBody)
@@ -678,7 +682,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
 
         let responseStatus = 200
         let responseHeaders = [UUID().uuidString: UUID().uuidString]
-        let responseBody = UUID().uuidString.data(using: .utf8)
+        let responseBody = Data(UUID().uuidString.utf8)
 
         MockURLProtocol.onRequest("DELETE", url) { request in
             self.assertRequestHeaders(request.allHTTPHeaderFields, expected: requestHeaders)
@@ -712,7 +716,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
             let destination = temporaryDirectory.appending("download")
             let request = HTTPClient.Request.download(
                 url: url,
-                fileSystem: AsyncFileSystem { localFileSystem },
+                fileSystem: localFileSystem,
                 destination: destination
             )
 
@@ -753,7 +757,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
         #endif
         let netrcContent = "machine async-protected.downloader-tests.com login anonymous password qwerty"
         let netrc = try NetrcAuthorizationWrapper(underlying: NetrcParser.parse(netrcContent))
-        let authData = "anonymous:qwerty".data(using: .utf8)!
+        let authData = Data("anonymous:qwerty".utf8)
         let testAuthHeader = "Basic \(authData.base64EncodedString())"
 
         let configuration = URLSessionConfiguration.default
@@ -769,7 +773,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
             let request = HTTPClient.Request.download(
                 url: url,
                 options: options,
-                fileSystem: AsyncFileSystem { localFileSystem },
+                fileSystem: localFileSystem,
                 destination: destination
             )
 
@@ -801,6 +805,78 @@ final class URLSessionHTTPClientTest: XCTestCase {
         }
     }
 
+    func testAsyncDownloadAuthenticateWithRedirectedSuccess() async throws {
+        #if !os(macOS)
+        // URLSession Download tests can only run on macOS
+        // as re-libs-foundation's URLSessionTask implementation which expects the temporaryFileURL property to be on the request.
+        // and there is no way to set it in a mock
+        // https://github.com/apple/swift-corelibs-foundation/pull/2593 tries to address the latter part
+        try XCTSkipIf(true, "test is only supported on macOS")
+        #endif
+        let netrcContent = "machine async-protected.downloader-tests.com login anonymous password qwerty"
+        let netrc = try NetrcAuthorizationWrapper(underlying: NetrcParser.parse(netrcContent))
+        let authData = Data("anonymous:qwerty".utf8)
+        let testAuthHeader = "Basic \(authData.base64EncodedString())"
+
+        let configuration = URLSessionConfiguration.default
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let urlSession = URLSessionHTTPClient(configuration: configuration)
+        let httpClient = HTTPClient(implementation: urlSession.execute)
+
+        try await testWithTemporaryDirectory { temporaryDirectory in
+            let url = URL("https://async-protected.downloader-tests.com/testBasics.zip")
+            let redirectURL = URL("https://cdn-async.downloader-tests.com/testBasics.zip")
+            let destination = temporaryDirectory.appending("download")
+            var options = HTTPClientRequest.Options()
+            options.authorizationProvider = netrc.httpAuthorizationHeader(for:)
+            let request = HTTPClient.Request.download(
+                url: url,
+                options: options,
+                fileSystem: localFileSystem,
+                destination: destination
+            )
+            let redirectRequest = HTTPClient.Request.download(
+                url: redirectURL,
+                options: options,
+                fileSystem: localFileSystem,
+                destination: destination
+            )
+
+            MockURLProtocol.onRequest(request) { request in
+                XCTAssertEqual(request.allHTTPHeaderFields?["Authorization"], testAuthHeader)
+                MockURLProtocol.sendResponse(statusCode: 302, headers: ["Location": redirectURL.absoluteString], for: request)
+                MockURLProtocol.sendRedirect(for: request, to: URLRequest(url: redirectURL))
+            }
+            MockURLProtocol.onRequest(redirectRequest) { request in
+                XCTAssertEqual(request.allHTTPHeaderFields?["Authorization"], nil)
+                MockURLProtocol.sendResponse(statusCode: 200, headers: ["Content-Length": "1024"], for: request)
+                MockURLProtocol.sendData(Data(repeating: 0xBE, count: 512), for: request)
+                MockURLProtocol.sendData(Data(repeating: 0xEF, count: 512), for: request)
+                MockURLProtocol.sendCompletion(for: request)
+            }
+
+            let response = try await httpClient.execute(
+                request,
+                progress: { bytesDownloaded, totalBytesToDownload in
+                    switch (bytesDownloaded, totalBytesToDownload) {
+                    case (512, 1024):
+                        break
+                    case (1024, 1024):
+                        break
+                    default:
+                        XCTFail("unexpected progress")
+                    }
+                }
+            )
+
+            XCTAssertEqual(response.statusCode, 200)
+            XCTAssertFileExists(destination)
+
+            let bytes = ByteString(Array(repeating: 0xBE, count: 512) + Array(repeating: 0xEF, count: 512))
+            XCTAssertEqual(try! localFileSystem.readFileContents(destination), bytes)
+        }
+    }
+
     func testAsyncDownloadDefaultAuthenticationSuccess() async throws {
         #if !os(macOS)
         // URLSession Download tests can only run on macOS
@@ -811,7 +887,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
         #endif
         let netrcContent = "default login default password default"
         let netrc = try NetrcAuthorizationWrapper(underlying: NetrcParser.parse(netrcContent))
-        let authData = "default:default".data(using: .utf8)!
+        let authData = Data("default:default".utf8)
         let testAuthHeader = "Basic \(authData.base64EncodedString())"
 
         let configuration = URLSessionConfiguration.default
@@ -828,7 +904,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
             let request = HTTPClient.Request.download(
                 url: url,
                 options: options,
-                fileSystem: AsyncFileSystem { localFileSystem },
+                fileSystem: localFileSystem,
                 destination: destination
             )
 
@@ -878,7 +954,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
             let url = URL("https://async-downloader-tests.com/testClientError.zip")
             let request = HTTPClient.Request.download(
                 url: url,
-                fileSystem: AsyncFileSystem { localFileSystem },
+                fileSystem: localFileSystem,
                 destination: temporaryDirectory.appending("download")
             )
 
@@ -927,7 +1003,7 @@ final class URLSessionHTTPClientTest: XCTestCase {
             let request = HTTPClient.Request.download(
                 url: url,
                 options: options,
-                fileSystem: AsyncFileSystem { localFileSystem },
+                fileSystem: localFileSystem,
                 destination: temporaryDirectory.appending("download")
             )
 
@@ -1051,6 +1127,19 @@ private class MockURLProtocol: URLProtocol {
         request.client?.urlProtocol(request, didFailWithError: error)
     }
 
+    static func sendRedirect(for request: URLRequest, to newRequest: URLRequest) {
+        let key = Key(request.httpMethod!, request.url!)
+        self.sendRedirect(newRequest: newRequest, for: key)
+    }
+
+    private static func sendRedirect(newRequest: URLRequest, for key: Key) {
+        guard let request = self.requests[key] else {
+            return XCTFail("url did not start loading")
+        }
+        let response = HTTPURLResponse(url: key.url, statusCode: 302, httpVersion: "1.1", headerFields: nil)!
+        request.client?.urlProtocol(request, wasRedirectedTo: newRequest, redirectResponse: response)
+    }
+
     private struct Key: Hashable {
         let method: String
         let url: URL
@@ -1116,87 +1205,87 @@ private class MockURLProtocol: URLProtocol {
 }
 
 final class FailingFileSystem: FileSystem {
-    var currentWorkingDirectory: AbsolutePath? {
+    var currentWorkingDirectory: TSCAbsolutePath? {
         fatalError("unexpected call")
     }
 
-    var homeDirectory: AbsolutePath {
+    var homeDirectory: TSCAbsolutePath {
         fatalError("unexpected call")
     }
 
-    var cachesDirectory: AbsolutePath? {
+    var cachesDirectory: TSCAbsolutePath? {
         fatalError("unexpected call")
     }
 
-    var tempDirectory: AbsolutePath {
+    var tempDirectory: TSCAbsolutePath {
         fatalError("unexpected call")
     }
 
-    func changeCurrentWorkingDirectory(to path: AbsolutePath) throws {
+    func changeCurrentWorkingDirectory(to path: TSCAbsolutePath) throws {
         fatalError("unexpected call")
     }
 
-    func exists(_ path: AbsolutePath, followSymlink: Bool) -> Bool {
+    func exists(_ path: TSCAbsolutePath, followSymlink: Bool) -> Bool {
         fatalError("unexpected call")
     }
 
-    func isDirectory(_: AbsolutePath) -> Bool {
+    func isDirectory(_: TSCAbsolutePath) -> Bool {
         fatalError("unexpected call")
     }
 
-    func isFile(_: AbsolutePath) -> Bool {
+    func isFile(_: TSCAbsolutePath) -> Bool {
         fatalError("unexpected call")
     }
 
-    func isExecutableFile(_: AbsolutePath) -> Bool {
+    func isExecutableFile(_: TSCAbsolutePath) -> Bool {
         fatalError("unexpected call")
     }
 
-    func isSymlink(_: AbsolutePath) -> Bool {
+    func isSymlink(_: TSCAbsolutePath) -> Bool {
         fatalError("unexpected call")
     }
 
-    func isReadable(_ path: AbsolutePath) -> Bool {
+    func isReadable(_ path: TSCAbsolutePath) -> Bool {
         fatalError("unexpected call")
     }
 
-    func isWritable(_ path: AbsolutePath) -> Bool {
+    func isWritable(_ path: TSCAbsolutePath) -> Bool {
         fatalError("unexpected call")
     }
 
-    func getDirectoryContents(_: AbsolutePath) throws -> [String] {
+    func getDirectoryContents(_: TSCAbsolutePath) throws -> [String] {
         fatalError("unexpected call")
     }
 
-    func readFileContents(_: AbsolutePath) throws -> ByteString {
+    func readFileContents(_: TSCAbsolutePath) throws -> ByteString {
         fatalError("unexpected call")
     }
 
-    func removeFileTree(_: AbsolutePath) throws {
+    func removeFileTree(_: TSCAbsolutePath) throws {
         fatalError("unexpected call")
     }
 
-    func chmod(_ mode: FileMode, path: AbsolutePath, options: Set<FileMode.Option>) throws {
+    func chmod(_ mode: FileMode, path: TSCAbsolutePath, options: Set<FileMode.Option>) throws {
         fatalError("unexpected call")
     }
 
-    func writeFileContents(_ path: AbsolutePath, bytes: ByteString) throws {
+    func writeFileContents(_ path: TSCAbsolutePath, bytes: ByteString) throws {
         fatalError("unexpected call")
     }
 
-    func createDirectory(_ path: AbsolutePath, recursive: Bool) throws {
+    func createDirectory(_ path: TSCAbsolutePath, recursive: Bool) throws {
         fatalError("unexpected call")
     }
 
-    func createSymbolicLink(_ path: AbsolutePath, pointingAt destination: AbsolutePath, relative: Bool) throws {
+    func createSymbolicLink(_ path: TSCAbsolutePath, pointingAt destination: TSCAbsolutePath, relative: Bool) throws {
         fatalError("unexpected call")
     }
 
-    func copy(from sourcePath: AbsolutePath, to destinationPath: AbsolutePath) throws {
+    func copy(from sourcePath: TSCAbsolutePath, to destinationPath: TSCAbsolutePath) throws {
         fatalError("unexpected call")
     }
 
-    func move(from sourcePath: AbsolutePath, to destinationPath: AbsolutePath) throws {
+    func move(from sourcePath: TSCAbsolutePath, to destinationPath: TSCAbsolutePath) throws {
         throw FileSystemError(.unsupported)
     }
 }

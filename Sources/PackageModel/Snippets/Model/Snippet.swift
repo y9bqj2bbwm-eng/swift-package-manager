@@ -10,7 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-import TSCBasic
+import Basics
+import Foundation
 
 public struct Snippet {
     public var path: AbsolutePath

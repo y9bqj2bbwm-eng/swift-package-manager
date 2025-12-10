@@ -10,11 +10,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+import struct Basics.SourceControlURL
 import struct Foundation.URL
 import struct TSCUtility.Version
 
 
-public struct RegistryReleaseMetadata {
+public struct RegistryReleaseMetadata: Hashable {
     public let source: Source
     public let metadata: Metadata
     public let signature: RegistrySignature?
@@ -30,19 +31,19 @@ public struct RegistryReleaseMetadata {
     }
 
     /// Metadata of the given release, provided by the registry.
-    public struct Metadata {
+    public struct Metadata: Hashable {
         public let author: Author?
         public let description: String?
         public let licenseURL: URL?
         public let readmeURL: URL?
-        public let scmRepositoryURLs: [URL]?
+        public let scmRepositoryURLs: [SourceControlURL]?
 
         public init(
             author: RegistryReleaseMetadata.Metadata.Author? = nil,
             description: String? = nil,
             licenseURL: URL? = nil,
             readmeURL: URL? = nil,
-            scmRepositoryURLs: [URL]?
+            scmRepositoryURLs: [SourceControlURL]?
         ) {
             self.author = author
             self.description = description
@@ -51,7 +52,7 @@ public struct RegistryReleaseMetadata {
             self.scmRepositoryURLs = scmRepositoryURLs
         }
 
-        public struct Author {
+        public struct Author: Hashable {
             public let name: String
             public let emailAddress: String?
             public let description: String?
@@ -73,7 +74,7 @@ public struct RegistryReleaseMetadata {
             }
         }
 
-        public struct Organization {
+        public struct Organization: Hashable {
             public let name: String
             public let emailAddress: String?
             public let description: String?
@@ -89,7 +90,7 @@ public struct RegistryReleaseMetadata {
     }
 
     /// Information from the signing certificate.
-    public struct RegistrySignature: Codable {
+    public struct RegistrySignature: Hashable, Codable {
         public let signedBy: SigningEntity?
         public let format: String
         public let value: [UInt8]
@@ -105,13 +106,13 @@ public struct RegistryReleaseMetadata {
         }
     }
 
-    public enum SigningEntity: Codable, Equatable {
+    public enum SigningEntity: Codable, Hashable, Sendable {
         case recognized(type: String, commonName: String?, organization: String?, identity: String?)
         case unrecognized(commonName: String?, organization: String?)
     }
     
     /// Information about the source of the release.
-    public enum Source: Equatable {
+    public enum Source: Hashable {
         case registry(URL)
     }
 }

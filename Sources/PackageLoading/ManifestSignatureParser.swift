@@ -10,9 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-@_implementationOnly import struct Foundation.Data
-
-import TSCBasic
+import Basics
+import struct Foundation.Data
 
 public enum ManifestSignatureParser {
     public static func parse(manifestPath: AbsolutePath, fileSystem: FileSystem) throws -> ManifestSignature? {

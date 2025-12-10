@@ -13,8 +13,6 @@
 import Dispatch
 
 import class Foundation.JSONDecoder
-import struct TSCBasic.AbsolutePath
-import class TSCBasic.Process
 
 private let defaultImports = ["Swift", "SwiftOnoneSupport", "_Concurrency",
                               "_StringProcessing", "_SwiftConcurrencyShims"]
@@ -23,44 +21,34 @@ private struct Imports: Decodable {
     let imports: [String]
 }
 
-public protocol ImportScanner {
-    func scanImports(_ filePathToScan: AbsolutePath, callbackQueue: DispatchQueue, completion: @escaping (Result<[String], Error>) -> Void)
+package protocol ImportScanner {
+    func scanImports(_ filePathToScan: AbsolutePath) async throws -> [String]
 }
 
 public struct SwiftcImportScanner: ImportScanner {
-    private let swiftCompilerEnvironment: EnvironmentVariables
+    private let swiftCompilerEnvironment: Environment
     private let swiftCompilerFlags: [String]
     private let swiftCompilerPath: AbsolutePath
 
-    public init(swiftCompilerEnvironment: EnvironmentVariables, swiftCompilerFlags: [String], swiftCompilerPath: AbsolutePath) {
+    package init(
+        swiftCompilerEnvironment: Environment,
+        swiftCompilerFlags: [String],
+        swiftCompilerPath: AbsolutePath
+    ) {
         self.swiftCompilerEnvironment = swiftCompilerEnvironment
         self.swiftCompilerFlags = swiftCompilerFlags
         self.swiftCompilerPath = swiftCompilerPath
     }
 
-    public func scanImports(_ filePathToScan: AbsolutePath,
-                            callbackQueue: DispatchQueue,
-                            completion: @escaping (Result<[String], Error>) -> Void) {
+    public func scanImports(_ filePathToScan: AbsolutePath) async throws -> [String] {
         let cmd = [swiftCompilerPath.pathString,
                    filePathToScan.pathString,
                    "-scan-dependencies", "-Xfrontend", "-import-prescan"] + self.swiftCompilerFlags
 
-        TSCBasic.Process.popen(arguments: cmd, environment: self.swiftCompilerEnvironment, queue: callbackQueue) { result in
-            dispatchPrecondition(condition: .onQueue(callbackQueue))
-            
-            do {
-                let stdout = try result.get().utf8Output()
-                let imports = try JSONDecoder.makeWithDefaults().decode(Imports.self, from: stdout).imports
-                    .filter { !defaultImports.contains($0) }
-                
-                callbackQueue.async {
-                    completion(.success(imports))
-                }
-            } catch {
-                callbackQueue.async {
-                    completion(.failure(error))
-                }
-            }
-        }
+        let result = try await AsyncProcess.popen(arguments: cmd, environment: self.swiftCompilerEnvironment)
+
+        let stdout = try result.utf8Output()
+        return try JSONDecoder.makeWithDefaults().decode(Imports.self, from: stdout).imports
+            .filter { !defaultImports.contains($0) }
     }
 }

@@ -11,9 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 @testable import Basics
-import TSCBasic
+import _InternalTestSupport
 import XCTest
-import SPMTestSupport
+
+import class Basics.AsyncProcess
 
 final class CancellatorTests: XCTestCase {
     func testHappyCase() throws {
@@ -47,22 +48,23 @@ final class CancellatorTests: XCTestCase {
 #if os(macOS)
         try withTemporaryDirectory { temporaryDirectory in
             let scriptPath = temporaryDirectory.appending("script")
-            try localFileSystem.writeFileContents(scriptPath) {
-                """
+            try localFileSystem.writeFileContents(
+                scriptPath,
+                string: """
                 set -e
 
                 echo "process started"
                 sleep 10
                 echo "exit normally"
                 """
-            }
+            )
 
             let observability = ObservabilitySystem.makeForTesting()
             let cancellator = Cancellator(observabilityScope: observability.topScope)
 
             // outputRedirection used to signal that the process started
             let startSemaphore = ProcessStartedSemaphore(term: "process started")
-            let process = TSCBasic.Process(
+            let process = AsyncProcess(
                 arguments: ["bash", scriptPath.pathString],
                 outputRedirection: .stream(
                     stdout: startSemaphore.handleOutput,
@@ -105,8 +107,9 @@ final class CancellatorTests: XCTestCase {
 #if os(macOS)
         try withTemporaryDirectory { temporaryDirectory in
             let scriptPath = temporaryDirectory.appending("script")
-            try localFileSystem.writeFileContents(scriptPath) {
-                """
+            try localFileSystem.writeFileContents(
+                scriptPath,
+                string: """
                 set -e
 
                 trap_handler() {
@@ -122,14 +125,14 @@ final class CancellatorTests: XCTestCase {
                 sleep 10
                 echo "exit normally"
                 """
-            }
+            )
 
             let observability = ObservabilitySystem.makeForTesting()
             let cancellator = Cancellator(observabilityScope: observability.topScope)
 
             // outputRedirection used to signal that the process SIGINT traps have been set up
             let startSemaphore = ProcessStartedSemaphore(term: "trap installed")
-            let process = TSCBasic.Process(
+            let process = AsyncProcess(
                 arguments: ["bash", scriptPath.pathString],
                 outputRedirection: .stream(
                     stdout: startSemaphore.handleOutput,
@@ -171,8 +174,9 @@ final class CancellatorTests: XCTestCase {
 #if os(macOS)
         try withTemporaryDirectory { temporaryDirectory in
             let scriptPath = temporaryDirectory.appending("script")
-            try localFileSystem.writeFileContents(scriptPath) {
-                """
+            try localFileSystem.writeFileContents(
+                scriptPath,
+                string: """
                 set -e
 
                 echo "process started"
@@ -180,7 +184,7 @@ final class CancellatorTests: XCTestCase {
                 sleep 10
                 echo "exit normally"
                 """
-            }
+            )
 
             let observability = ObservabilitySystem.makeForTesting()
             let cancellator = Cancellator(observabilityScope: observability.topScope)
@@ -205,9 +209,14 @@ final class CancellatorTests: XCTestCase {
             XCTAssertNotNil(registrationKey)
 
             let finishSemaphore = DispatchSemaphore(value: 0)
+
             DispatchQueue.sharedConcurrent.async {
                 defer { finishSemaphore.signal() }
-                process.launch()
+                do {
+                    try process.run()
+                } catch {
+                    XCTFail("Process failed to run with error: \(error)")
+                }
                 process.waitUntilExit()
                 print("process finished")
                 XCTAssertEqual(process.terminationStatus, SIGINT)
@@ -231,10 +240,12 @@ final class CancellatorTests: XCTestCase {
 
     func testFoundationProcessForceKill() throws {
 #if os(macOS)
+
         try withTemporaryDirectory { temporaryDirectory in
             let scriptPath = temporaryDirectory.appending("script")
-            try localFileSystem.writeFileContents(scriptPath) {
-                """
+            try localFileSystem.writeFileContents(
+                scriptPath,
+                string: """
                 set -e
 
                 trap_handler() {
@@ -250,7 +261,7 @@ final class CancellatorTests: XCTestCase {
                 sleep 10
                 echo "exit normally"
                 """
-            }
+            )
 
             let observability = ObservabilitySystem.makeForTesting()
             let cancellator = Cancellator(observabilityScope: observability.topScope)
@@ -275,9 +286,14 @@ final class CancellatorTests: XCTestCase {
             XCTAssertNotNil(registrationKey)
 
             let finishSemaphore = DispatchSemaphore(value: 0)
+
             DispatchQueue.sharedConcurrent.async {
                 defer { finishSemaphore.signal() }
-                process.launch()
+                do {
+                    try process.run()
+                } catch {
+                    XCTFail("Process failed to run with error: \(error)")
+                }
                 process.waitUntilExit()
                 print("process finished")
                 XCTAssertEqual(process.terminationStatus, SIGTERM)
@@ -300,6 +316,9 @@ final class CancellatorTests: XCTestCase {
     }
 
     func testConcurrency() throws {
+#if !os(macOS)
+        try XCTSkipIf(true, "skipping on non-macOS because of timeout problems")
+#endif
         let observability = ObservabilitySystem.makeForTesting()
         let cancellator = Cancellator(observabilityScope: observability.topScope)
 
@@ -341,8 +360,7 @@ final class CancellatorTests: XCTestCase {
 
     func testTimeout() throws {
         struct Worker {
-            func work()  {}
-
+            @Sendable
             func cancel() {
                 Thread.sleep(forTimeInterval: 5)
             }
@@ -356,7 +374,36 @@ final class CancellatorTests: XCTestCase {
         let startSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.sharedConcurrent.async {
             startSemaphore.signal()
-            worker.work()
+        }
+
+        XCTAssertEqual(.success, startSemaphore.wait(timeout: .now() + .seconds(1)), "timeout starting tasks")
+
+        let cancelled = cancellator._cancel(deadline: .now() + .seconds(1))
+        XCTAssertEqual(cancelled, 0)
+
+        testDiagnostics(observability.diagnostics) { result in
+            result.check(
+                diagnostic: .contains("timeout waiting for cancellation"),
+                severity: .warning
+            )
+        }
+    }
+
+    func testAsyncTimeout() throws {
+        struct Worker: AsyncCancellable {
+            @Sendable
+            func cancel(deadline: DispatchTime) async throws {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+
+        let observability = ObservabilitySystem.makeForTesting()
+        let cancellator = Cancellator(observabilityScope: observability.topScope)
+        let worker = Worker()
+        cancellator.register(name: "test", handler: worker)
+        let startSemaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.sharedConcurrent.async {
+            startSemaphore.signal()
         }
 
         XCTAssertEqual(.success, startSemaphore.wait(timeout: .now() + .seconds(1)), "timeout starting tasks")
@@ -386,6 +433,7 @@ fileprivate struct Worker {
         return self.semaphore.wait(timeout: deadline)
     }
 
+    @Sendable
     func cancel() {
         print("\(self.name) cancel")
         self.semaphore.signal()

@@ -27,7 +27,7 @@ extension Workspace {
         /// Represents the state of the managed dependency.
         public indirect enum State: Equatable, CustomStringConvertible {
             /// The dependency is a local package on the file system.
-            case fileSystem(AbsolutePath)
+            case fileSystem(Basics.AbsolutePath)
 
             /// The dependency is a managed source control checkout.
             case sourceControlCheckout(CheckoutState)
@@ -40,9 +40,9 @@ extension Workspace {
             /// If the path is non-nil, the dependency is managed by a user and is
             /// located at the path. In other words, this dependency is being used
             /// for top of the tree style development.
-            case edited(basedOn: ManagedDependency?, unmanagedPath: AbsolutePath?)
+            case edited(basedOn: ManagedDependency?, unmanagedPath: Basics.AbsolutePath?)
 
-            case custom(version: Version, path: AbsolutePath)
+            case custom(version: Version, path: Basics.AbsolutePath)
 
             public var description: String {
                 switch self {
@@ -67,12 +67,12 @@ extension Workspace {
         public let state: State
 
         /// The checked out path of the dependency on disk, relative to the workspace checkouts path.
-        public let subpath: RelativePath
+        public let subpath: Basics.RelativePath
 
         internal init(
             packageRef: PackageReference,
             state: State,
-            subpath: RelativePath
+            subpath: Basics.RelativePath
         ) {
             self.packageRef = packageRef
             self.subpath = subpath
@@ -85,7 +85,7 @@ extension Workspace {
         /// - Parameters:
         ///     - subpath: The subpath inside the editable directory.
         ///     - unmanagedPath: A custom absolute path instead of the subpath.
-        public func edited(subpath: RelativePath, unmanagedPath: AbsolutePath?) throws -> ManagedDependency {
+        public func edited(subpath: Basics.RelativePath, unmanagedPath: Basics.AbsolutePath?) throws -> ManagedDependency {
             guard case .sourceControlCheckout =  self.state else {
                 throw InternalError("invalid dependency state: \(self.state)")
             }
@@ -102,11 +102,11 @@ extension Workspace {
         ) throws -> ManagedDependency {
             switch packageRef.kind {
             case .root(let path), .fileSystem(let path), .localSourceControl(let path):
-                return ManagedDependency(
+                return try ManagedDependency(
                     packageRef: packageRef,
                     state: .fileSystem(path),
                     // FIXME: This is just a fake entry, we should fix it.
-                    subpath: RelativePath(packageRef.identity.description)
+                    subpath: RelativePath(validating: packageRef.identity.description)
                 )
             default:
                 throw InternalError("invalid package type: \(packageRef.kind)")
@@ -117,7 +117,7 @@ extension Workspace {
         public static func sourceControlCheckout(
             packageRef: PackageReference,
             state: CheckoutState,
-            subpath: RelativePath
+            subpath: Basics.RelativePath
         ) throws -> ManagedDependency {
             switch packageRef.kind {
             case .localSourceControl, .remoteSourceControl:
@@ -135,7 +135,7 @@ extension Workspace {
         public static func registryDownload(
             packageRef: PackageReference,
             version: Version,
-            subpath: RelativePath
+            subpath: Basics.RelativePath
         ) throws -> ManagedDependency {
             guard case .registry = packageRef.kind else {
                 throw InternalError("invalid package type: \(packageRef.kind)")
@@ -150,9 +150,9 @@ extension Workspace {
         /// Create an edited dependency
         public static func edited(
             packageRef: PackageReference,
-            subpath: RelativePath,
+            subpath: Basics.RelativePath,
             basedOn: ManagedDependency?,
-            unmanagedPath: AbsolutePath?
+            unmanagedPath: Basics.AbsolutePath?
         ) -> ManagedDependency {
             return ManagedDependency(
                 packageRef: packageRef,
@@ -173,11 +173,17 @@ extension Workspace.ManagedDependency: CustomStringConvertible {
 
 extension Workspace {
     /// A collection of managed dependencies.
-    final public class ManagedDependencies {
+    public struct ManagedDependencies {
         private var dependencies: [PackageIdentity: ManagedDependency]
 
         init() {
             self.dependencies = [:]
+        }
+        
+        private init(
+            _ dependencies: [PackageIdentity: ManagedDependency]
+        ) {
+            self.dependencies = dependencies
         }
 
         init(_ dependencies: [ManagedDependency]) throws {
@@ -197,7 +203,7 @@ extension Workspace {
 
         // When loading manifests in Workspace, there are cases where we must also compare the location
         // as it may attempt to load manifests for dependencies that have the same identity but from a different location
-        // (e.g. dependency is changed to  a fork with the same identity)
+        // (e.g. dependency is changed to a fork with the same identity)
         public subscript(comparingLocation package: PackageReference) -> ManagedDependency? {
             if let dependency = self.dependencies[package.identity], dependency.packageRef.equalsIncludingLocation(package) {
                 return dependency
@@ -205,12 +211,16 @@ extension Workspace {
             return .none
         }
 
-        public func add(_ dependency: ManagedDependency) {
-            self.dependencies[dependency.packageRef.identity] = dependency
+        public func add(_ dependency: ManagedDependency) -> Self {
+            var dependencies = dependencies
+            dependencies[dependency.packageRef.identity] = dependency
+            return ManagedDependencies(dependencies)
         }
 
-        public func remove(_ identity: PackageIdentity) {
-            self.dependencies[identity] = nil
+        public func remove(_ identity: PackageIdentity) -> Self {
+            var dependencies = dependencies
+            dependencies[identity] = nil
+            return ManagedDependencies(dependencies)
         }
     }
 }

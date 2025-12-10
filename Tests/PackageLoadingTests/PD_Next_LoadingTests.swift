@@ -13,15 +13,15 @@
 import Basics
 import PackageLoading
 import PackageModel
-import SPMTestSupport
+import _InternalTestSupport
 import XCTest
 
-class PackageDescriptionNextLoadingTests: PackageDescriptionLoadingTests {
+final class PackageDescriptionNextLoadingTests: PackageDescriptionLoadingTests {
     override var toolsVersion: ToolsVersion {
         .vNext
     }
 
-    func testImplicitFoundationImportFails() throws {
+    func testImplicitFoundationImportFails() async throws {
         let content = """
             import PackageDescription
 
@@ -31,29 +31,12 @@ class PackageDescriptionNextLoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        XCTAssertThrowsError(try loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") {
+        await XCTAssertAsyncThrowsError(try await loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") {
             if case ManifestParseError.invalidManifestFormat(let error, _, _) = $0 {
                 XCTAssertMatch(error, .contains("cannot find 'FileManager' in scope"))
             } else {
                 XCTFail("unexpected error: \($0)")
             }
         }
-    }
-
-    func testMacroTargets() throws {
-        let content = """
-            import CompilerPluginSupport
-            import PackageDescription
-
-            let package = Package(name: "MyPackage",
-                targets: [
-                    .macro(name: "MyMacro"),
-                ]
-            )
-            """
-
-        let observability = ObservabilitySystem.makeForTesting()
-        let (_, diagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
-        XCTAssertEqual(diagnostics.count, 0, "unexpected diagnostics: \(diagnostics)")
     }
 }

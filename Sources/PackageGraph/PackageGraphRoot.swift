@@ -12,7 +12,7 @@
 
 import Basics
 import PackageModel
-import TSCBasic
+
 import enum TSCUtility.Git
 
 /// Represents the input to the package graph root.
@@ -23,10 +23,18 @@ public struct PackageGraphRootInput {
     /// Top level dependencies to the graph.
     public let dependencies: [PackageDependency]
 
+    /// The trait configuration for the root packages.
+    public let traitConfiguration: TraitConfiguration
+
     /// Create a package graph root.
-    public init(packages: [AbsolutePath], dependencies: [PackageDependency] = []) {
+    public init(
+        packages: [AbsolutePath],
+        dependencies: [PackageDependency] = [],
+        traitConfiguration: TraitConfiguration = .default
+    ) {
         self.packages = packages
         self.dependencies = dependencies
+        self.traitConfiguration = traitConfiguration
     }
 }
 
@@ -46,15 +54,46 @@ public struct PackageGraphRoot {
         return self.packages.values.map { $0.reference }
     }
 
+    private let _dependencies: [PackageDependency]
+
     /// The top level dependencies.
-    public let dependencies: [PackageDependency]
+    public var dependencies: [PackageDependency] {
+        guard let dependencyMapper else {
+            return self._dependencies
+        }
+
+        return self._dependencies.map { dependency in
+            do {
+                return try dependencyMapper.mappedDependency(
+                    MappablePackageDependency(
+                        dependency,
+                        parentPackagePath: localFileSystem.currentWorkingDirectory ?? .root
+                    ),
+                    fileSystem: localFileSystem
+                )
+            } catch {
+                observabilityScope.emit(warning: "could not map dependency \(dependency.identity): \(error.interpolationDescription)")
+                return dependency
+            }
+        }
+    }
+
+    private let dependencyMapper: DependencyMapper?
+    private let observabilityScope: ObservabilityScope
 
     /// Create a package graph root.
     /// Note this quietly skip inputs for which manifests are not found. this could be because the manifest  failed to load or for some other reasons
     // FIXME: This API behavior wrt to non-found manifests is fragile, but required by IDEs
     // it may lead to incorrect assumption in downstream code which may expect an error if a manifest was not found
     // we should refactor this API to more clearly return errors for inputs that do not have a corresponding manifest
-    public init(input: PackageGraphRootInput, manifests: [AbsolutePath: Manifest], explicitProduct: String? = nil) {
+    public init(
+        input: PackageGraphRootInput,
+        manifests: [AbsolutePath: Manifest],
+        explicitProduct: String? = nil,
+        dependencyMapper: DependencyMapper? = nil,
+        observabilityScope: ObservabilityScope,
+        enabledTraitsMap: EnabledTraitsMap = .init()
+    ) throws {
         self.packages = input.packages.reduce(into: .init(), { partial, inputPath in
             if let manifest = manifests[inputPath]  {
                 let packagePath = manifest.path.parentDirectory
@@ -65,34 +104,77 @@ public struct PackageGraphRoot {
 
         // FIXME: Deprecate special casing once the manifest supports declaring used executable products.
         // Special casing explicit products like this is necessary to pass the test suite and satisfy backwards compatibility.
-        // However, changing the dependencies based on the command line arguments may force pins to temporarily change,
+        // However, changing the dependencies based on the command line arguments may force `Package.resolved` to temporarily change,
         // which can become a nuisance.
         // Such pin switching can currently be worked around by declaring the executable product as a dependency of a dummy target.
         // But in the future it might be worth providing a way of declaring them in the manifest without a dummy target,
         // at which time the current special casing can be deprecated.
-        var adjustedDependencies = input.dependencies
+        var adjustedDependencies = input.dependencies.filter({ dep in
+            guard !manifests.isEmpty else { return true }
+            // Check that the dependency is used in at least one of the manifests.
+            // If not, then we can omit this dependency if pruning unused dependencies
+            // is enabled.
+            return manifests.values.reduce(false) { result, manifest in
+                let enabledTraits = enabledTraitsMap[manifest.packageIdentity]
+                if let isUsed = try? manifest.isPackageDependencyUsed(dep, enabledTraits: enabledTraits) {
+                    return result || isUsed
+                }
+
+                return true
+            }
+        })
+
         if let explicitProduct {
-            for dependency in manifests.values.lazy.map({ $0.dependenciesRequired(for: .everything) }).joined() {
+            // FIXME: `dependenciesRequired` modifies manifests and prevents conversion of `Manifest` to a value type
+            let deps = try? manifests.values.lazy
+                .map({ manifest -> [PackageDependency] in
+                    let enabledTraits = enabledTraitsMap[manifest.packageIdentity]
+                    return try manifest.dependenciesRequired(for: .everything, enabledTraits)
+                })
+                .flatMap({ $0 })
+
+            for dependency in deps ?? [] {
                 adjustedDependencies.append(dependency.filtered(by: .specific([explicitProduct])))
             }
         }
 
-        self.dependencies = adjustedDependencies
+        self._dependencies = adjustedDependencies
+        self.dependencyMapper = dependencyMapper
+        self.observabilityScope = observabilityScope
     }
 
     /// Returns the constraints imposed by root manifests + dependencies.
-    public func constraints() throws -> [PackageContainerConstraint] {
-        let constraints = self.packageReferences.map {
-            PackageContainerConstraint(package: $0, requirement: .unversioned, products: .everything)
-        }
-        
-        let depend = try dependencies.map{
-            PackageContainerConstraint(
-                package: $0.createPackageRef(),
-                requirement: try $0.toConstraintRequirement(),
-                products: $0.productFilter
+    public func constraints(_ enabledTraitsMap: EnabledTraitsMap) throws -> [PackageContainerConstraint] {
+        var rootEnabledTraits: EnabledTraits = []
+        let constraints = self.packages.map { (identity, package) in
+            let enabledTraits = enabledTraitsMap[identity]
+            rootEnabledTraits.formUnion(enabledTraits)
+            return PackageContainerConstraint(
+                package: package.reference,
+                requirement: .unversioned,
+                products: .everything,
+                enabledTraits: enabledTraits
             )
         }
+        
+        let depend = try dependencies
+            .map { dep in
+                let enabledTraits = dep.traits?.filter {
+                    guard let condition = $0.condition else { return true }
+                    return condition.isSatisfied(by: rootEnabledTraits.names)
+                }.map({ EnabledTrait(name: $0.name, setBy: .package(.init(identity: "root"))) })
+
+                var enabledTraitsSet = enabledTraitsMap[dep.identity]
+                enabledTraitsSet.formUnion(enabledTraits ?? [])
+
+                return PackageContainerConstraint(
+                    package: dep.packageRef,
+                    requirement: try dep.toConstraintRequirement(),
+                    products: dep.productFilter,
+                    enabledTraits: enabledTraitsSet
+                )
+        }
+
         return constraints + depend
     }
 }
@@ -138,3 +220,4 @@ extension PackageDependency.Registry.Requirement {
         }
     }
 }
+

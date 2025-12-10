@@ -11,12 +11,12 @@
 //===----------------------------------------------------------------------===//
 
 import Foundation
-import TSCBasic
+import func TSCBasic.determineTempDirectory
 
 public enum SandboxNetworkPermission: Equatable {
     case none
-    case local(ports: [UInt8])
-    case all(ports: [UInt8])
+    case local(ports: [Int])
+    case all(ports: [Int])
     case docker
     case unixDomainSocket
 
@@ -28,7 +28,7 @@ public enum SandboxNetworkPermission: Equatable {
         }
     }
 
-    fileprivate var ports: [UInt8] {
+    fileprivate var ports: [Int] {
         switch self {
         case .all(let ports): return ports
         case .local(let ports): return ports
@@ -44,18 +44,26 @@ public enum Sandbox {
     ///
     /// - Parameters:
     ///   - command: The command line to sandbox (including executable as first argument)
-    ///   - strictness: The basic strictness level of the standbox.
+    ///   - fileSystem: The file system instance to use.
+    ///   - strictness: The basic strictness level of the sandbox.
     ///   - writableDirectories: Paths under which writing should be allowed, even if they would otherwise be read-only based on the strictness or paths in `readOnlyDirectories`.
     ///   - readOnlyDirectories: Paths under which writing should be denied, even if they would have otherwise been allowed by the rules implied by the strictness level.
     public static func apply(
         command: [String],
+        fileSystem: FileSystem,
         strictness: Strictness = .default,
         writableDirectories: [AbsolutePath] = [],
         readOnlyDirectories: [AbsolutePath] = [],
         allowNetworkConnections: [SandboxNetworkPermission] = []
     ) throws -> [String] {
         #if os(macOS)
-        let profile = try macOSSandboxProfile(strictness: strictness, writableDirectories: writableDirectories, readOnlyDirectories: readOnlyDirectories, allowNetworkConnections: allowNetworkConnections)
+        let profile = try macOSSandboxProfile(
+            fileSystem: fileSystem,
+            strictness: strictness,
+            writableDirectories: writableDirectories,
+            readOnlyDirectories: readOnlyDirectories,
+            allowNetworkConnections: allowNetworkConnections
+        )
         return ["/usr/bin/sandbox-exec", "-p", profile] + command
         #else
         // rdar://40235432, rdar://75636874 tracks implementing sandboxes for other platforms.
@@ -86,7 +94,7 @@ fileprivate let threadSafeDarwinCacheDirectories: [AbsolutePath] = {
 
         guard confstr(name, buffer.baseAddress, length) == length else { return nil }
 
-        let value: String = String(cString: buffer.baseAddress!)
+        let value = String(cString: buffer.baseAddress!)
         guard value.hasSuffix("/") else { return nil }
 
         return try? resolveSymlinks(AbsolutePath(validating: value))
@@ -94,13 +102,14 @@ fileprivate let threadSafeDarwinCacheDirectories: [AbsolutePath] = {
 
     var directories: [AbsolutePath] = []
     try? directories.append(AbsolutePath(validating: "/private/var/tmp"))
-    (try? TSCBasic.determineTempDirectory()).map { directories.append($0) }
+    (try? TSCBasic.determineTempDirectory()).map { directories.append(AbsolutePath($0)) }
     GetConfStr(_CS_DARWIN_USER_TEMP_DIR).map { directories.append($0) }
     GetConfStr(_CS_DARWIN_USER_CACHE_DIR).map { directories.append($0) }
     return directories
 }()
 
 fileprivate func macOSSandboxProfile(
+    fileSystem: FileSystem,
     strictness: Sandbox.Strictness,
     writableDirectories: [AbsolutePath],
     readOnlyDirectories: [AbsolutePath],
@@ -120,6 +129,12 @@ fileprivate func macOSSandboxProfile(
 
     // This is needed to launch any processes.
     contents += "(allow process*)\n"
+    
+    // This is needed to use the UniformTypeIdentifiers API.
+    contents += "(allow mach-lookup (global-name \"com.apple.lsd.mapdb\"))\n"
+
+    // For downloadable Metal toolchain lookups.
+    contents += "(allow mach-lookup (global-name \"com.apple.mobileassetd.v2\"))\n"
 
     if allowNetworkConnections.filter({ $0 != .none }).isEmpty == false {
         // this is used by the system for caching purposes and will lead to log spew if not allowed
@@ -176,9 +191,16 @@ fileprivate func macOSSandboxProfile(
     }
     // Optionally allow writing to temporary directories (a lot of use of Foundation requires this).
     else if strictness == .writableTemporaryDirectory {
-        // Add `subpath` expressions for the regular and the Foundation temporary directories.
-        for tmpDir in ["/tmp", NSTemporaryDirectory()] {
-            writableDirectoriesExpression += try ["(subpath \(resolveSymlinks(AbsolutePath(validating: tmpDir)).quotedAsSubpathForSandboxProfile))"]
+        var stableCacheDirectories: [AbsolutePath] = []
+        // Add `subpath` expressions for the regular, Foundation and clang module cache temporary directories.
+        for tmpDir in (["/tmp"] + threadSafeDarwinCacheDirectories.map(\.pathString)) {
+            let resolved = try resolveSymlinks(AbsolutePath(validating: tmpDir))
+            if !stableCacheDirectories.contains(where: { $0.isAncestorOfOrEqual(to: resolved) }) {
+                stableCacheDirectories.append(resolved)
+                writableDirectoriesExpression += [
+                    "(subpath \(resolved.quotedAsSubpathForSandboxProfile))",
+                ]
+            }
         }
     }
 
@@ -203,8 +225,20 @@ fileprivate func macOSSandboxProfile(
     // Emit rules for paths under which writing is allowed, even if they are descendants directories that are otherwise read-only.
     if writableDirectories.count > 0 {
         contents += "(allow file-write*\n"
+        var stableItemReplacementDirectories: [AbsolutePath] = []
         for path in writableDirectories {
             contents += "    (subpath \(try resolveSymlinks(path).quotedAsSubpathForSandboxProfile))\n"
+            
+            // `itemReplacementDirectories` may return a combination of stable directory paths, and subdirectories which are unique on every call. Avoid including unnecessary subdirectories in the Sandbox profile which may lead to nondeterminism in its construction.
+            if let itemReplacementDirectories = try? fileSystem.itemReplacementDirectories(for: path).sorted(by: { $0.pathString.count < $1.pathString.count }) {
+                for directory in itemReplacementDirectories {
+                    let resolved = try resolveSymlinks(directory)
+                    if !stableItemReplacementDirectories.contains(where: { $0.isAncestorOfOrEqual(to: resolved) }) {
+                        stableItemReplacementDirectories.append(resolved)
+                        contents += "    (subpath \(resolved.quotedAsSubpathForSandboxProfile))\n"
+                    }
+                }
+            }
         }
         contents += ")\n"
     }
@@ -212,12 +246,12 @@ fileprivate func macOSSandboxProfile(
     return contents
 }
 
-fileprivate extension AbsolutePath {
+extension AbsolutePath {
     /// Private computed property that returns a version of the path as a string quoted for use as a subpath in a .sb sandbox profile.
-    var quotedAsSubpathForSandboxProfile: String {
-        return "\"" + self.pathString
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+    fileprivate var quotedAsSubpathForSandboxProfile: String {
+        "\"" + self.pathString
+            .replacing("\\", with: "\\\\")
+            .replacing("\"", with: "\\\"")
             + "\""
     }
 }

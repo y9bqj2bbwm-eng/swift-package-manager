@@ -40,20 +40,15 @@ public struct BuildFlags: Equatable, Encodable {
         self.linkerFlags = linkerFlags
         self.xcbuildFlags = xcbuildFlags
     }
-    
-    /// Appends corresponding properties of a different `BuildFlags` value into `self`.
-    /// - Parameter buildFlags: a `BuildFlags` value to merge flags from.
-    public mutating func append(_ buildFlags: BuildFlags) {
-        cCompilerFlags += buildFlags.cCompilerFlags
-        cxxCompilerFlags += buildFlags.cxxCompilerFlags
-        swiftCompilerFlags += buildFlags.swiftCompilerFlags
-        linkerFlags += buildFlags.linkerFlags
 
-        if var xcbuildFlags, let newXcbuildFlags = buildFlags.xcbuildFlags {
-            xcbuildFlags += newXcbuildFlags
-            self.xcbuildFlags = xcbuildFlags
-        } else if let xcbuildFlags = buildFlags.xcbuildFlags {
-            self.xcbuildFlags = xcbuildFlags
+    public mutating func merging(_ flags: BuildFlags) -> Self {
+        self.cCompilerFlags.insert(contentsOf: flags.cCompilerFlags, at: 0)
+        self.cxxCompilerFlags.insert(contentsOf: flags.cxxCompilerFlags, at: 0)
+        self.swiftCompilerFlags.insert(contentsOf: flags.swiftCompilerFlags, at: 0)
+        self.linkerFlags.insert(contentsOf: flags.linkerFlags, at: 0)
+        if self.xcbuildFlags != nil || flags.xcbuildFlags != nil {
+            self.xcbuildFlags = (self.xcbuildFlags ?? []) + (flags.xcbuildFlags ?? [])
         }
+        return self
     }
 }

@@ -11,16 +11,17 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-@_implementationOnly import Foundation
+import Foundation
 import PackageModel
 import TSCBasic
+import TSCUtility
 
 public struct ManifestValidator {
     static var supportedLocalBinaryDependencyExtensions: [String] {
-        ["zip"] + BinaryTarget.Kind.allCases.filter{ $0 != .unknown }.map { $0.fileExtension }
+        Set(["zip"] + BinaryModule.Kind.allCases.filter { !$0.isUnknown }.map { $0.fileExtension }).sorted()
     }
     static var supportedRemoteBinaryDependencyExtensions: [String] {
-        ["zip", "artifactbundleindex"]
+        ["artifactbundleindex", "zip"]
     }
 
     private let manifest: Manifest
@@ -40,6 +41,7 @@ public struct ManifestValidator {
         diagnostics += self.validateTargets()
         diagnostics += self.validateProducts()
         diagnostics += self.validateDependencies()
+        diagnostics += self.validateTraits()
 
         // Checks reserved for tools version 5.2 features
         if self.manifest.toolsVersion >= .v5_2 {
@@ -92,6 +94,42 @@ public struct ManifestValidator {
         return diagnostics
     }
 
+    private func validateTraits() -> [Basics.Diagnostic] {
+        var diagnostics = [Basics.Diagnostic]()
+
+        if self.manifest.traits.count > 300 {
+            // We limit the number of traits to 300 for now
+            diagnostics.append(.tooManyTraits())
+        }
+
+        for trait in self.manifest.traits {
+            let traitName = trait.name
+            guard traitName.count > 0 else {
+                diagnostics.append(.emptyTraitName())
+                continue
+            }
+
+            guard traitName.isValidIdentifier else {
+                diagnostics.append(.invalidTraitName(trait: traitName))
+                continue
+            }
+        }
+
+        let traitKeys = Set(self.manifest.traits.map { $0.name })
+
+        for trait in self.manifest.traits {
+            for otherTrait in trait.enabledTraits {
+                if !traitKeys.contains(otherTrait) {
+                    // The trait is not contained in the other trait.
+                    // This means they reference a trait that this package doesn't define.
+                    diagnostics.append(.invalidEnabledTrait(trait: otherTrait, enabledBy: trait.name))
+                }
+            }
+        }
+
+        return diagnostics
+    }
+
     private func validateDependencies() -> [Basics.Diagnostic] {
         var diagnostics = [Basics.Diagnostic]()
 
@@ -124,7 +162,7 @@ public struct ManifestValidator {
                     continue
                 }
 
-                guard let relativePath = try? RelativePath(validating: path) else {
+                guard let relativePath = try? Basics.RelativePath(validating: path) else {
                     diagnostics.append(.invalidLocalBinaryPath(path: path, targetName: target.name))
                     continue
                 }
@@ -192,9 +230,9 @@ public struct ManifestValidator {
                 case .product(_, let packageName, _, _):
                     if self.manifest.packageDependency(referencedBy: targetDependency) == nil {
                         diagnostics.append(.unknownTargetPackageDependency(
-                            packageName: packageName ?? "unknown package name",
+                            packageName: packageName,
                             targetName: target.name,
-                            validPackages: self.manifest.dependencies.map { $0.nameForTargetDependencyResolutionOnly }
+                            validPackages: self.manifest.dependencies
                         ))
                     }
                 case .byName(let name, _):
@@ -206,7 +244,7 @@ public struct ManifestValidator {
                         diagnostics.append(.unknownTargetDependency(
                             dependency: name,
                             targetName: target.name,
-                            validDependencies: self.manifest.dependencies.map { $0.nameForTargetDependencyResolutionOnly }
+                            validDependencies: self.manifest.dependencies
                         ))
                     }
                 }
@@ -218,29 +256,19 @@ public struct ManifestValidator {
 
     func validateSourceControlDependency(_ dependency: PackageDependency.SourceControl) -> [Basics.Diagnostic] {
         var diagnostics = [Basics.Diagnostic]()
-
-        // validate source control ref
-        switch dependency.requirement {
-        case .branch(let name):
-            if !self.sourceControlValidator.isValidRefFormat(name) {
-                diagnostics.append(.invalidSourceControlBranchName(name))
-            }
-        case .revision(let revision):
-            if !self.sourceControlValidator.isValidRefFormat(revision) {
-                diagnostics.append(.invalidSourceControlRevision(revision))
-            }
-        default:
-            break
-        }
         // if a location is on file system, validate it is in fact a git repo
         // there is a case to be made to throw early (here) if the path does not exists
         // but many of our tests assume they can pass a non existent path
         if case .local(let localPath) = dependency.location, self.fileSystem.exists(localPath) {
-            if !self.sourceControlValidator.isValidDirectory(localPath) {
-                // Provides better feedback when mistakingly using url: for a dependency that
-                // is a local package. Still allows for using url with a local package that has
-                // also been initialized by git
-                diagnostics.append(.invalidSourceControlDirectory(localPath))
+            do {
+                if try !self.sourceControlValidator.isValidDirectory(localPath) {
+                    // Provides better feedback when mistakenly using url: for a dependency that
+                    // is a local package. Still allows for using url with a local package that has
+                    // also been initialized by git
+                    diagnostics.append(.invalidSourceControlDirectory(localPath))
+                }
+            } catch {
+                diagnostics.append(.invalidSourceControlDirectory(localPath, underlyingError: error))
             }
         }
         return diagnostics
@@ -248,8 +276,7 @@ public struct ManifestValidator {
 }
 
 public protocol ManifestSourceControlValidator {
-    func isValidRefFormat(_ revision: String) -> Bool
-    func isValidDirectory(_ path: AbsolutePath) -> Bool
+    func isValidDirectory(_ path: Basics.AbsolutePath) throws -> Bool
 }
 
 extension Basics.Diagnostic {
@@ -269,20 +296,25 @@ extension Basics.Diagnostic {
         .error("invalid type for binary product '\(productName)'; products referencing only binary targets must be executable or automatic library products")
     }
 
-    /*static func duplicateDependency(dependencyIdentity: PackageIdentity) -> Self {
-        .error("duplicate dependency '\(dependencyIdentity)'")    
+    static func unknownTargetDependency(dependency: String, targetName: String, validDependencies: [PackageDependency]) -> Self {
+
+        .error("unknown dependency '\(dependency)' in target '\(targetName)'; valid dependencies are: \(validDependencies.map{ "\($0.descriptionForValidation)" }.joined(separator: ", "))")
     }
 
-    static func duplicateDependencyName(dependencyName: String) -> Self {
-        .error("duplicate dependency named '\(dependencyName)'; consider differentiating them using the 'name' argument")
-    }*/
-
-    static func unknownTargetDependency(dependency: String, targetName: String, validDependencies: [String]) -> Self {
-        .error("unknown dependency '\(dependency)' in target '\(targetName)'; valid dependencies are: '\(validDependencies.joined(separator: "', '"))'")
+    static func unknownTargetPackageDependency(packageName: String?, targetName: String, validPackages: [PackageDependency]) -> Self {
+        let messagePrefix: String
+        if let packageName {
+            messagePrefix = "unknown package '\(packageName)'"
+        } else {
+            messagePrefix = "undeclared package"
+        }
+        return .error("\(messagePrefix) in dependencies of target '\(targetName)'; valid packages are: \(validPackages.map{ "\($0.descriptionForValidation)" }.joined(separator: ", "))")
     }
 
-    static func unknownTargetPackageDependency(packageName: String, targetName: String, validPackages: [String]) -> Self {
-        .error("unknown package '\(packageName)' in dependencies of target '\(targetName)'; valid packages are: '\(validPackages.joined(separator: "', '"))'")
+    static func invalidDependencyOnTestTarget(dependency: Module.Dependency, targetName: String) -> Self {
+        .error(
+            "Invalid dependency: '\(targetName)' cannot depend on test target dependency '\(dependency.name)'. Only test targets can depend on other test targets"
+        )
     }
 
     static func invalidBinaryLocation(targetName: String) -> Self {
@@ -312,20 +344,66 @@ extension Basics.Diagnostic {
             """)
     }
 
-    static func invalidSourceControlBranchName(_ name: String) -> Self {
-        .error("invalid branch name: '\(name)'")
+    static func errorSuffix(_ error: Error?) -> String {
+        if let error {
+            return ": \(error.interpolationDescription)"
+        } else {
+            return ""
+        }
     }
 
-    static func invalidSourceControlRevision(_ revision: String) -> Self {
-        .error("invalid revision: '\(revision)'")
+    static func invalidSourceControlDirectory(_ path: Basics.AbsolutePath, underlyingError: Error? = nil) -> Self {
+        .error("cannot clone from local directory \(path)\nPlease git init or use \"path:\" for \(path)\(errorSuffix(underlyingError))")
     }
 
-    static func invalidSourceControlDirectory(_ path: AbsolutePath) -> Self {
-        .error("cannot clone from local directory \(path)\nPlease git init or use \"path:\" for \(path)")
+    static func tooManyTraits() -> Self {
+        .error("A package can define a maximum of 300 traits")
+    }
+
+    static func emptyTraitName() -> Self {
+        .error("Empty strings are not allowed as trait names")
+    }
+
+    static func invalidTraitName(trait: String) -> Self {
+        .error("Invalid trait name \(trait). Trait names must be valid Swift identifiers")
+    }
+
+    static func invalidEnabledTrait(trait: String, enabledBy enablerTrait: String) -> Self {
+        .error("Trait \(enablerTrait) enables \(trait) which is not defined in the package")
+    }
+
+    static func invalidDefaultTrait(defaultTrait: String) -> Self {
+        .error("Default trait \(defaultTrait) is not defined in the package")
     }
 }
 
 extension TargetDescription {
     fileprivate var isRemote: Bool { url != nil }
     fileprivate var isLocal: Bool { path != nil }
+}
+
+extension PackageDependency {
+    fileprivate var descriptionForValidation: String {
+        var description = "'\(self.nameForModuleDependencyResolutionOnly)'"
+
+        if let locationsString = {
+            switch self {
+            case .fileSystem(let settings):
+                return "at '\(settings.path.pathString)'"
+            case .sourceControl(let settings):
+                switch settings.location {
+                case .local(let path):
+                    return "at '\(path.pathString)'"
+                case .remote(let url):
+                    return "from '\(url.absoluteString)'"
+                }
+            case .registry:
+                return .none
+            }
+        }() {
+            description += " (\(locationsString))"
+        }
+
+        return description
+    }
 }

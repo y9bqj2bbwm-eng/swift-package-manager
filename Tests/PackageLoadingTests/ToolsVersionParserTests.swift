@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2021 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -10,15 +10,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-
 import Basics
 import PackageModel
 import PackageLoading
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import XCTest
 
-class ToolsVersionParserTests: XCTestCase {
+final class ToolsVersionParserTests: XCTestCase {
     func parse(_ content: String, _ body: ((ToolsVersion) -> Void)? = nil) throws {
         let toolsVersion = try ToolsVersionParser.parse(utf8String: content)
         body?(toolsVersion)
@@ -117,22 +115,95 @@ class ToolsVersionParserTests: XCTestCase {
 
 
         do {
-            let stream = BufferedOutputByteStream()
-            stream <<< "// swift-tools-version:3.1.0\n\n\n\n\n"
-            stream <<< "let package = .."
-            try self.parse(stream.bytes.validDescription!) { toolsVersion in
+            try self.parse(
+                """
+                // swift-tools-version:3.1.0
+
+
+
+                let package = ..
+                """
+            ) { toolsVersion in
                 XCTAssertEqual(toolsVersion.description, "3.1.0")
             }
         }
 
         do {
-            let stream = BufferedOutputByteStream()
-            stream <<< "// swift-tools-version:3.1.0\n"
-            stream <<< "// swift-tools-version:4.1.0\n\n\n\n"
-            stream <<< "let package = .."
-            try self.parse(stream.bytes.validDescription!) { toolsVersion in
+            try self.parse(
+                """
+                // swift-tools-version:3.1.0
+
+                // swift-tools-version:4.1.0
+
+
+
+
+                let package = ..
+                """
+            ) { toolsVersion in
                 XCTAssertEqual(toolsVersion.description, "3.1.0")
             }
+        }
+    }
+
+    func testToolsVersionAllowsComments() throws {
+        try self.parse(
+        """
+        // comment 1
+        // comment 2
+        // swift-tools-version: 6.0
+        // comment
+        let package = ..
+        """
+        ) { toolsVersion in
+            XCTAssertEqual(toolsVersion.description, "6.0.0")
+        }
+
+        do {
+            try self.parse(
+            """
+            // comment 1
+            // comment 2
+            // swift-tools-version:5.0
+            // comment
+            let package = ..
+            """
+            ) { _ in
+                XCTFail("expected an error to be thrown")
+            }
+        } catch ToolsVersionParser.Error.backwardIncompatiblePre6_0(let incompatibility, _) {
+            XCTAssertEqual(incompatibility, .toolsVersionNeedsToBeFirstLine)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        do {
+            try self.parse(
+            """
+            // comment 1
+            // comment 2
+            let package = ..
+            """
+            ) { _ in
+                XCTFail("expected an error to be thrown")
+            }
+        } catch ToolsVersionParser.Error.malformedToolsVersionSpecification(.label(.isMisspelt(let label))) {
+            XCTAssertEqual(label, "comment")
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        try self.parse(
+        """
+        /*
+        this is a multiline comment
+        */
+        // swift-tools-version: 6.0
+        // comment
+        let package = ..
+        """
+        ) { toolsVersion in
+            XCTAssertEqual(toolsVersion.description, "6.0.0")
         }
     }
 
@@ -148,7 +219,7 @@ class ToolsVersionParserTests: XCTestCase {
 
         XCTAssertThrowsError(
             try ToolsVersionParser.parse(manifestPath: manifestPath, fileSystem: fs),
-            "empty manifest '/lorem/ipsum/dolor/Package.swift'") { error in
+            "empty manifest '\(manifestPath.pathString)'") { error in
                 guard let error = error as? ManifestParseError, case .emptyManifest(let errorPath) = error else {
                     XCTFail("'ManifestParseError.emptyManifest' should've been thrown, but a different error is thrown")
                     return
@@ -159,7 +230,7 @@ class ToolsVersionParserTests: XCTestCase {
                     return
                 }
 
-                XCTAssertEqual(error.description, "'/lorem/ipsum/dolor/Package.swift' is empty")
+                XCTAssertEqual(error.description, "'\(manifestPath._nativePathString(escaped: false))' is empty")
             }
     }
 
@@ -679,7 +750,6 @@ class ToolsVersionParserTests: XCTestCase {
     func testVersionSpecificManifest() throws {
         let fs = InMemoryFileSystem()
         let root = AbsolutePath("/pkg")
-        try fs.createDirectory(root, recursive: true)
 
         /// Loads the tools version of root pkg.
         func parse(_ body: (ToolsVersion) -> Void) throws {
@@ -688,7 +758,7 @@ class ToolsVersionParserTests: XCTestCase {
         }
 
         // Test default manifest.
-        try fs.writeFileContents(root.appending("Package.swift"), bytes: "// swift-tools-version:3.1.1\n")
+        try fs.writeFileContents(root.appending("Package.swift"), string: "// swift-tools-version:3.1.1\n")
         try parse { version in
             XCTAssertEqual(version.description, "3.1.1")
         }
@@ -700,19 +770,19 @@ class ToolsVersionParserTests: XCTestCase {
         XCTAssertEqual(keys.count, 3)
 
         // Test the last key.
-        try fs.writeFileContents(root.appending("Package\(keys[2]).swift"), bytes: "// swift-tools-version:3.4.1\n")
+        try fs.writeFileContents(root.appending("Package\(keys[2]).swift"), string: "// swift-tools-version:3.4.1\n")
         try parse { version in
             XCTAssertEqual(version.description, "3.4.1")
         }
 
         // Test the second last key.
-        try fs.writeFileContents(root.appending("Package\(keys[1]).swift"), bytes: "// swift-tools-version:3.4.0\n")
+        try fs.writeFileContents(root.appending("Package\(keys[1]).swift"), string: "// swift-tools-version:3.4.0\n")
         try parse { version in
             XCTAssertEqual(version.description, "3.4.0")
         }
 
         // Test the first key.
-        try fs.writeFileContents(root.appending("Package\(keys[0]).swift"), bytes: "// swift-tools-version:3.4.5\n")
+        try fs.writeFileContents(root.appending("Package\(keys[0]).swift"), string: "// swift-tools-version:3.4.5\n")
         try parse { version in
             XCTAssertEqual(version.description, "3.4.5")
         }
@@ -729,11 +799,11 @@ class ToolsVersionParserTests: XCTestCase {
             body(try ToolsVersionParser.parse(manifestPath: manifestPath, fileSystem: fs))
         }
 
-        try fs.writeFileContents(root.appending("Package.swift"), bytes: "// swift-tools-version:1.0.0\n")
-        try fs.writeFileContents(root.appending("Package@swift-4.2.swift"), bytes: "// swift-tools-version:3.4.5\n")
-        try fs.writeFileContents(root.appending("Package@swift-15.1.swift"), bytes: "// swift-tools-version:3.4.6\n")
-        try fs.writeFileContents(root.appending("Package@swift-15.2.swift"), bytes: "// swift-tools-version:3.4.7\n")
-        try fs.writeFileContents(root.appending("Package@swift-15.3.swift"), bytes: "// swift-tools-version:3.4.8\n")
+        try fs.writeFileContents(root.appending("Package.swift"), string: "// swift-tools-version:1.0.0\n")
+        try fs.writeFileContents(root.appending("Package@swift-4.2.swift"), string: "// swift-tools-version:3.4.5\n")
+        try fs.writeFileContents(root.appending("Package@swift-15.1.swift"), string: "// swift-tools-version:3.4.6\n")
+        try fs.writeFileContents(root.appending("Package@swift-15.2.swift"), string: "// swift-tools-version:3.4.7\n")
+        try fs.writeFileContents(root.appending("Package@swift-15.3.swift"), string: "// swift-tools-version:3.4.8\n")
 
         try parse(currentToolsVersion: ToolsVersion(version: "15.1.1")) { version in
             XCTAssertEqual(version.description, "3.4.6")
@@ -752,4 +822,19 @@ class ToolsVersionParserTests: XCTestCase {
         }
     }
 
+    func testVersionSpecificManifestMostCompatibleIfLower() throws {
+        let fs = InMemoryFileSystem(emptyFiles:
+            "/pkg/foo"
+        )
+        let root = AbsolutePath("/pkg")
+
+        try fs.writeFileContents(root.appending("Package.swift"), string: "// swift-tools-version:6.0.0\n")
+        try fs.writeFileContents(root.appending("Package@swift-5.0.swift"), string: "// swift-tools-version:5.0.0\n")
+
+        let currentToolsVersion = ToolsVersion(version: "5.5.0")
+        let manifestPath = try ManifestLoader.findManifest(packagePath: root, fileSystem: fs, currentToolsVersion: currentToolsVersion)
+        let version = try ToolsVersionParser.parse(manifestPath: manifestPath, fileSystem: fs)
+        try version.validateToolsVersion(currentToolsVersion, packageIdentity: .plain("lunch"))
+        XCTAssertEqual(version.description, "5.0.0")
+    }
 }

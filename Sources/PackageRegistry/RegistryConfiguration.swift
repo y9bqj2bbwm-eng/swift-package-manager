@@ -15,6 +15,14 @@ import Foundation
 import PackageModel
 
 public struct RegistryConfiguration: Hashable {
+    static func authenticationStorageKey(for registryURL: URL) throws -> String {
+        guard let host = registryURL.host?.lowercased() else {
+            throw RegistryError.invalidURL(registryURL)
+        }
+
+        return [host, registryURL.port?.description].compactMap { $0 }.joined(separator: ":")
+    }
+
     public enum Version: Int, Codable {
         case v1 = 1
     }
@@ -66,9 +74,19 @@ public struct RegistryConfiguration: Hashable {
         self.defaultRegistry != nil || !self.scopedRegistries.isEmpty
     }
 
-    public func authentication(for registryURL: URL) -> Authentication? {
-        guard let host = registryURL.host else { return nil }
-        return self.registryAuthentication[host]
+    public func authentication(for registryURL: URL) throws -> Authentication? {
+        let key = try Self.authenticationStorageKey(for: registryURL)
+        return self.registryAuthentication[key]
+    }
+
+    public mutating func add(authentication: Authentication, for registryURL: URL) throws {
+        let key = try Self.authenticationStorageKey(for: registryURL)
+        self.registryAuthentication[key] = authentication
+    }
+
+    public mutating func removeAuthentication(for registryURL: URL) {
+        guard let key = try? Self.authenticationStorageKey(for: registryURL) else { return }
+        self.registryAuthentication.removeValue(forKey: key)
     }
 
     public func signing(for package: PackageIdentity.RegistryIdentity, registry: Registry) -> Security.Signing {
@@ -387,9 +405,9 @@ extension PackageModel.Registry: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            url: try container.decode(URL.self, forKey: .url),
-            supportsAvailability: try container.decodeIfPresent(Bool.self, forKey: .supportsAvailability) ?? false
+        try self.init(
+            url: container.decode(URL.self, forKey: .url),
+            supportsAvailability: container.decodeIfPresent(Bool.self, forKey: .supportsAvailability) ?? false
         )
     }
 

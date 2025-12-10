@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Basics
 import Foundation
-import TSCBasic
 
 import class TSCUtility.JSONMessageStreamingParser
 import protocol TSCUtility.JSONMessageStreamingParserDelegate
@@ -74,6 +74,7 @@ public struct SwiftCompilerMessage {
         case began(BeganInfo)
         case skipped(SkippedInfo)
         case finished(OutputInfo)
+        case abnormal(OutputInfo)
         case signalled(OutputInfo)
         case unparsableOutput(String)
     }
@@ -202,6 +203,8 @@ extension SwiftCompilerMessage.Kind: Decodable, Equatable {
             self = try .skipped(SkippedInfo(from: decoder))
         case "finished":
             self = try .finished(OutputInfo(from: decoder))
+        case "abnormal-exit":
+            self = try .abnormal(OutputInfo(from: decoder))
         case "signalled":
             self = try .signalled(OutputInfo(from: decoder))
         default:

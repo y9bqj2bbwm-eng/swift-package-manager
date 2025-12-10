@@ -13,7 +13,9 @@
 import Basics
 import Foundation
 import SPMBuildCore
-import TSCBasic
+
+import class TSCBasic.ThreadSafeOutputByteStream
+import protocol TSCBasic.OutputByteStream
 
 import enum TSCUtility.Diagnostics
 import protocol TSCUtility.ProgressAnimationProtocol
@@ -67,47 +69,49 @@ extension XCBuildDelegate: XCBuildOutputParserDelegate {
             queue.async {
                 self.didEmitProgressOutput = true
                 let text = self.logLevel.isVerbose ? [info.executionDescription, info.commandLineDisplayString].compactMap { $0 }.joined(separator: "\n") : info.executionDescription
-                self.progressAnimation.update(step: self.percentComplete, total: 100, text: text)
+                if !self.logLevel.isQuiet {
+                    self.progressAnimation.update(step: self.percentComplete, total: 100, text: text)
+                }
                 self.buildSystem.delegate?.buildSystem(self.buildSystem, willStartCommand: BuildSystemCommand(name: "\(info.taskID)", description: info.executionDescription, verboseDescription: info.commandLineDisplayString))
                 self.buildSystem.delegate?.buildSystem(self.buildSystem, didStartCommand: BuildSystemCommand(name: "\(info.taskID)", description: info.executionDescription, verboseDescription: info.commandLineDisplayString))
             }
         case .taskOutput(let info):
+            guard !self.logLevel.isQuiet else { return }
             queue.async {
                 self.progressAnimation.clear()
-                self.outputStream <<< info.data
-                self.outputStream <<< "\n"
+                self.outputStream.send("\(info.data)\n")
                 self.outputStream.flush()
             }
         case .taskComplete(let info):
             queue.async {
-                self.buildSystem.delegate?.buildSystem(self.buildSystem, didStartCommand: BuildSystemCommand(name: "\(info.taskID)", description: info.result.rawValue))
+                self.buildSystem.delegate?.buildSystem(self.buildSystem, didFinishCommand: BuildSystemCommand(name: "\(info.taskID)", description: info.result.rawValue))
             }
         case .buildDiagnostic(let info):
+            guard !self.logLevel.isQuiet else { return }
             queue.async {
                 self.progressAnimation.clear()
-                self.outputStream <<< info.message
-                self.outputStream <<< "\n"
+                self.outputStream.send("\(info.message)\n")
                 self.outputStream.flush()
             }
         case .taskDiagnostic(let info):
+            guard !self.logLevel.isQuiet else { return }
             queue.async {
                 self.progressAnimation.clear()
-                self.outputStream <<< info.message
-                self.outputStream <<< "\n"
+                self.outputStream.send("\(info.message)\n")
                 self.outputStream.flush()
             }
         case .targetDiagnostic(let info):
+            guard !self.logLevel.isQuiet else { return }
             queue.async {
                 self.progressAnimation.clear()
-                self.outputStream <<< info.message
-                self.outputStream <<< "\n"
+                self.outputStream.send("\(info.message)\n")
                 self.outputStream.flush()
             }
         case .buildOutput(let info):
+            guard !self.logLevel.isQuiet else { return }
             queue.async {
                 self.progressAnimation.clear()
-                self.outputStream <<< info.data
-                self.outputStream <<< "\n"
+                self.outputStream.send("\(info.data)\n")
                 self.outputStream.flush()
             }
         case .didUpdateProgress(let info):
@@ -120,17 +124,17 @@ extension XCBuildDelegate: XCBuildOutputParserDelegate {
             queue.async {
                 switch info.result {
                 case .aborted, .cancelled, .failed:
-                    self.outputStream <<< "Build \(info.result)\n"
+                    self.outputStream.send("Build \(info.result)\n")
                     self.outputStream.flush()
                     self.buildSystem.delegate?.buildSystem(self.buildSystem, didFinishWithResult: false)
                 case .ok:
-                    if self.didEmitProgressOutput {
+                    if self.didEmitProgressOutput && !self.logLevel.isQuiet {
                         self.progressAnimation.update(step: 100, total: 100, text: "Build succeeded")
                     }
                     self.buildSystem.delegate?.buildSystem(self.buildSystem, didFinishWithResult: true)
                 }
             }
-        case .buildStarted, .preparationComplete, .targetUpToDate, .targetStarted, .targetComplete, .taskUpToDate:
+        case .buildStarted, .preparationComplete, .targetUpToDate, .targetStarted, .targetComplete, .taskUpToDate, .unknown:
             break
         }
     }
@@ -148,9 +152,8 @@ private extension Basics.Diagnostic {
     }
 }
 
-// FIXME: Move to TSC.
+@available(*, deprecated, message: "use ProgressAnimation.ninja(stream:) instead")
 public final class VerboseProgressAnimation: ProgressAnimationProtocol {
-
     private let stream: OutputByteStream
 
     public init(stream: OutputByteStream) {
@@ -158,12 +161,12 @@ public final class VerboseProgressAnimation: ProgressAnimationProtocol {
     }
 
     public func update(step: Int, total: Int, text: String) {
-        stream <<< text <<< "\n"
+        stream.send("\(text)\n")
         stream.flush()
     }
 
     public func complete(success: Bool) {
-        stream <<< "\n"
+        stream.send("\n")
         stream.flush()
     }
 

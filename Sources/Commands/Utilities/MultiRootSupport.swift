@@ -13,11 +13,12 @@
 import Basics
 import CoreCommands
 import Foundation
+import TSCBasic
+
 #if canImport(FoundationXML)
 import FoundationXML
 #endif
 import class PackageModel.Manifest
-import TSCBasic
 
 /// A bare minimum loader for Xcode workspaces.
 ///
@@ -45,7 +46,7 @@ public struct XcodeWorkspaceLoader: WorkspaceLoader {
     }
 
     /// Load the given workspace and return the file ref paths from it.
-    public func load(workspace: AbsolutePath) throws -> [AbsolutePath] {
+    public func load(workspace: Basics.AbsolutePath) throws -> [Basics.AbsolutePath] {
         let path = workspace.appending("contents.xcworkspacedata")
         let contents: Data = try self.fileSystem.readFileContents(path)
 
@@ -57,9 +58,9 @@ public struct XcodeWorkspaceLoader: WorkspaceLoader {
         }
 
         /// Convert the parsed result into absolute paths.
-        var result: [AbsolutePath] = []
+        var result: [Basics.AbsolutePath] = []
         for location in delegate.locations {
-            let path: AbsolutePath
+            let path: Basics.AbsolutePath
 
             switch location.kind {
             case .absolute:
